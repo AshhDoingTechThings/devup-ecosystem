@@ -53,6 +53,16 @@ if (!DB) {
     });
     after(async () => h?.close());
 
+    test("the startup list counts each startup's open roles", async () => {
+      const founder = await h.person("hiring", "FOUNDER");
+      const s = await h.startup(founder, { domain: "SAAS" });
+      const job = (isActive: boolean) => ({ startupId: s.id, title: "Role", description: "d", type: "INTERNSHIP" as const, domain: "SaaS", location: "Remote", isActive });
+      await h.prisma.job.createMany({ data: [job(true), job(true), job(false)] });
+      const r = await h.call("GET", "/api/startups?domain=SAAS");
+      assert.equal(r.status, 200);
+      assert.equal(r.body.data[0]._count.jobs, 2, "active roles only");
+    });
+
     test("bad paging and filters are a 400 on every public list, never a 500", async () => {
       const bad = [
         "startups?limit=abc", "startups?page=-1", "startups?page=0", "startups?domain=NOPE", "startups?stage=NOPE", "startups?search=a&search=b",
@@ -69,10 +79,11 @@ if (!DB) {
       const ai = await h.call("GET", "/api/startups?domain=AI_ML");
       assert.equal(ai.status, 200);
       assert.equal(ai.body.data.length, 1);
-      const paged = await h.call("GET", "/api/startups?limit=2&page=2");
+      // Two FINTECH startups, one per page.
+      const paged = await h.call("GET", "/api/startups?domain=FINTECH&limit=1&page=2");
       assert.equal(paged.status, 200);
       assert.equal(paged.body.data.length, 1);
-      assert.deepEqual([paged.body.meta.page, paged.body.meta.limit, paged.body.meta.total, paged.body.meta.totalPages], [2, 2, 3, 2]);
+      assert.deepEqual([paged.body.meta.page, paged.body.meta.limit, paged.body.meta.total, paged.body.meta.totalPages], [2, 1, 2, 2]);
       const huge = await h.call("GET", "/api/startups?limit=100000");
       assert.equal(huge.status, 200);
       assert.equal(huge.body.meta.limit, 100);

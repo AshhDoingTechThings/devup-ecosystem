@@ -64,8 +64,13 @@ export class StartupsService {
         skip,
         take: limit,
         orderBy: { createdAt: "desc" },
-        // Public listing: who founded it, never how to reach them.
-        include: { primaryFounder: { select: { id: true, profile: { select: { name: true } } } } }
+        // Public listing: who founded it, never how to reach them. The open-role
+        // count feeds the "open roles" figure and sort on /ecosystem, which
+        // read a _count that was never returned and always showed 0.
+        include: {
+          primaryFounder: { select: { id: true, profile: { select: { name: true } } } },
+          _count: { select: { jobs: { where: { isActive: true } } } },
+        }
       }),
       prisma.startup.count({ where })
     ]);

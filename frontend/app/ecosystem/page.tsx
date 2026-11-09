@@ -36,6 +36,9 @@ const DOMAIN_MAP: Record<string, string> = {
   OTHER: "Other"
 };
 
+const SORTS = ["Latest", "Stage", "Most roles"] as const;
+type Sort = (typeof SORTS)[number];
+
 const STAGE_MAP: Record<string, string> = {
   IDEA: "Idea",
   MVP: "MVP",
@@ -49,6 +52,7 @@ const STAGE_MAP: Record<string, string> = {
 export default function EcosystemPage() {
   const [activeCategory, setActiveCategory] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState<Sort>("Latest");
   const [startups, setStartups] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const isMobile = useIsMobile();
@@ -78,12 +82,22 @@ export default function EcosystemPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const filteredStartups = startups.filter((s) => {
-    const matchesCategory = activeCategory === "All" || s.domain === activeCategory;
-    const matchesSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.tagline.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
+  // Matches what the search box promises: name, tagline, domain and place.
+  const query = searchQuery.trim().toLowerCase();
+  const stageRank = (label: string) => Object.values(STAGE_MAP).indexOf(label);
+  const filteredStartups = startups
+    .filter((s) => {
+      const matchesCategory = activeCategory === "All" || s.domain === activeCategory;
+      const matchesSearch = !query || [s.name, s.tagline, s.domain, s.location].some((v) => String(v ?? "").toLowerCase().includes(query));
+      return matchesCategory && matchesSearch;
+    })
+    // The API returns newest first, which is "Latest". The sort menu used to
+    // have no handler at all.
+    .sort((a, b) =>
+      sortBy === "Stage" ? stageRank(b.stage) - stageRank(a.stage)
+        : sortBy === "Most roles" ? b.roles - a.roles
+        : 0
+    );
 
   // Partners are external organisations we work with, not companies DevUp built.
   // They render in their own section so the portfolio framing never covers them.
@@ -235,7 +249,8 @@ export default function EcosystemPage() {
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#6b6b6b]" />
                 <input
                   type="text"
-                  placeholder="Search startups, founders, domains..."
+                  placeholder="Search startups, domains, places..."
+                  aria-label="Search startups"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full bg-[#111111] border border-white/10 rounded-lg py-2.5 pl-10 pr-4 outline-none transition-all focus:border-[#c8f135]/40 focus:shadow-[0_0_0_3px_rgba(200,241,53,0.08)]"
@@ -274,12 +289,13 @@ export default function EcosystemPage() {
             resultsCount={`Showing ${filteredStartups.length} startups · ${new Set(filteredStartups.map(s => s.domain)).size} domains · ${filteredStartups.reduce((acc, curr) => acc + curr.roles, 0)} open roles`}
             sort={
               <select 
+                aria-label="Sort startups"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as Sort)}
                 className="bg-transparent border-none text-[#6b6b6b] text-[13px] outline-none cursor-pointer"
                 style={{ fontFamily: "var(--font-inter), sans-serif" }}
               >
-                <option>Latest</option>
-                <option>Stage</option>
-                <option>Most roles</option>
+                {SORTS.map((o) => <option key={o}>{o}</option>)}
               </select>
             }
           />
