@@ -43,7 +43,7 @@ export const hackathonSchema = z.object({
     registrationDeadline: z.string().datetime(),
     registrationLink: z.string().url().optional(),
     registrationFee: z.string().optional(),
-    maxParticipants: z.number().int().optional(),
+    maxParticipants: z.number().int().positive().optional(),
     isEcosystemHosted: z.boolean().default(false),
     domainsDetailed: domainsDetailedSchema.optional(),
     timeline: timelineSchema.optional(),
@@ -67,7 +67,7 @@ export const updateHackathonSchema = z.object({
     registrationDeadline: z.string().datetime().optional(),
     registrationLink: z.string().url().nullable().optional(),
     registrationFee: z.string().nullable().optional(),
-    maxParticipants: z.number().int().nullable().optional(),
+    maxParticipants: z.number().int().positive().nullable().optional(),
     isEcosystemHosted: z.boolean().optional(),
     isActive: z.boolean().optional(),
     isFeatured: z.boolean().optional(),
@@ -81,7 +81,8 @@ export const updateHackathonSchema = z.object({
 export const registerHackathonSchema = z.object({
   body: z.object({
     teamName: z.string().optional(),
-    teamSize: z.number().int().min(1).default(1),
+    // Same cap as a lead registration's teamCount.
+    teamSize: z.number().int().min(1).max(10).default(1),
   })
 });
 

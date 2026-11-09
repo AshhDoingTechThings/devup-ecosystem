@@ -6,6 +6,18 @@ import { env } from "../../config/env";
 import { HackathonMode } from "@prisma/client";
 import { pageParams, enumParam, textParam } from "../../lib/listQuery";
 
+/**
+ * Dates have to make sense together: an event that ends before it starts, or
+ * registration that stays open after it is over, used to be saved as given.
+ */
+function assertSchedule(s: { startDate: Date | string; endDate: Date | string; registrationDeadline: Date | string }) {
+  const start = new Date(s.startDate);
+  const end = new Date(s.endDate);
+  const deadline = new Date(s.registrationDeadline);
+  if (end < start) throw new AppError(400, "The hackathon must end after it starts", "INVALID_SCHEDULE");
+  if (deadline > end) throw new AppError(400, "Registration must close before the hackathon ends", "INVALID_SCHEDULE");
+}
+
 export class HackathonsService {
   async getHackathons(query: any) {
     const { page, limit, skip } = pageParams(query);
@@ -62,10 +74,19 @@ export class HackathonsService {
   }
 
   async createHackathon(data: any) {
+    assertSchedule(data);
     return await prisma.hackathon.create({ data });
   }
 
   async updateHackathon(id: string, data: any) {
+    if (data.startDate || data.endDate || data.registrationDeadline) {
+      const current = await prisma.hackathon.findUnique({
+        where: { id },
+        select: { startDate: true, endDate: true, registrationDeadline: true },
+      });
+      if (!current) throw new AppError(404, "Hackathon not found", "HACKATHON_NOT_FOUND");
+      assertSchedule({ ...current, ...data });
+    }
     return await prisma.hackathon.update({ where: { id }, data });
   }
 
@@ -126,26 +147,34 @@ export class HackathonsService {
       throw new AppError(400, "Registration deadline has passed");
     }
 
-    if (hackathon.maxParticipants && hackathon.currentParticipants >= hackathon.maxParticipants) {
-      throw new AppError(400, "Hackathon is fully booked");
-    }
-
     const existing = await prisma.hackathonRegistration.findUnique({
       where: { hackathonId_userId: { hackathonId: id, userId } }
     });
 
     if (existing) throw new AppError(400, "You are already registered for this hackathon");
 
-    const reg = await prisma.hackathonRegistration.create({
-      data: { hackathonId: id, userId, teamName: data.teamName, teamSize: data.teamSize }
-    });
+    /*
+     * Seats are claimed with one conditional update, inside the same
+     * transaction as the registration. Checking the count and incrementing it
+     * separately let simultaneous sign-ups all pass the check and overfill the
+     * event, and the check ignored team size (a team of five fitted into one
+     * free seat).
+     */
+    const seats = data.teamSize || 1;
+    return await prisma.$transaction(async (tx) => {
+      const claimed = await tx.hackathon.updateMany({
+        where: {
+          id,
+          ...(hackathon.maxParticipants ? { currentParticipants: { lte: hackathon.maxParticipants - seats } } : {}),
+        },
+        data: { currentParticipants: { increment: seats } },
+      });
+      if (claimed.count === 0) throw new AppError(400, "Hackathon is fully booked", "HACKATHON_FULL");
 
-    await prisma.hackathon.update({
-      where: { id },
-      data: { currentParticipants: { increment: data.teamSize || 1 } }
+      return tx.hackathonRegistration.create({
+        data: { hackathonId: id, userId, teamName: data.teamName, teamSize: seats }
+      });
     });
-
-    return reg;
   }
 
   async createLead(hackathonId: string, data: { name: string; email?: string; phone: string; teamName?: string; teamCount: number; members?: { name: string; email: string; phone: string }[]; college: string }) {
