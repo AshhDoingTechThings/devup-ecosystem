@@ -4,6 +4,7 @@ import { z } from "zod";
 import { LeadKycDocType } from "@prisma/client";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { validate } from "../../middleware/validate";
+import { AppError } from "../../middleware/errorHandler";
 import * as kyc from "./kyc.service";
 
 /**
@@ -38,8 +39,10 @@ publicKycRouter.get("/:token", async (req, res) => {
 
 publicKycRouter.post("/:token/upload", upload.single("file"), async (req, res) => {
   const parsed = docType.safeParse(req.body?.docType);
-  if (!parsed.success) throw Object.assign(new Error("Unknown document type"), { status: 400 });
-  if (!req.file) throw Object.assign(new Error("No file received"), { status: 400 });
+  // AppError, not Error + { status }: the error handler reads statusCode, so
+  // these used to reach the applicant as 500 "Internal Server Error".
+  if (!parsed.success) throw new AppError(400, "Choose which document this is", "INVALID_DOC_TYPE");
+  if (!req.file) throw new AppError(400, "Attach a JPG, PNG, WebP or PDF.", "FILE_REQUIRED");
 
   ok(
     res,
