@@ -1,4 +1,5 @@
 import { logger } from "../middleware/logger";
+import { assertPublicWebUrl, type Resolver } from "./publicUrl";
 
 /**
  * HTML → PDF using headless Chrome.
@@ -27,6 +28,28 @@ let unavailableAt = 0;
  * an HTML-only record until someone happened to restart the server.
  */
 const RETRY_AFTER_MS = 5 * 60_000;
+
+/**
+ * May the renderer fetch this URL?
+ *
+ * Letters embed image URLs that a startup's admins type into their branding
+ * (logo, signature, co-signature, mark). Chrome runs on this server, so
+ * without a check, a "logo" of http://169.254.169.254/... or an internal
+ * hostname made the server request it on every render. Only inline data and
+ * public web addresses are loaded; everything else (file:, internal hosts,
+ * private ranges, odd ports) is refused, which the letter shows as a missing
+ * image.
+ */
+export async function rendererMayFetch(url: string, resolve?: Resolver): Promise<boolean> {
+  if (url.startsWith("data:")) return true;
+  if (!/^https?:\/\//i.test(url)) return false;
+  try {
+    await assertPublicWebUrl(url, resolve);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function getBrowser(): Promise<Browser | null> {
   if (unavailableReason && Date.now() - unavailableAt < RETRY_AFTER_MS)
@@ -140,6 +163,19 @@ async function renderOnce(
   let page: any;
   try {
     page = await browser.newPage();
+
+    await page.setRequestInterception(true);
+    page.on("request", (request: any) => {
+      const url: string = request.url();
+      rendererMayFetch(url).then(
+        (allowed) => {
+          if (allowed) return request.continue();
+          logger.warn(`PDF render blocked a request to ${url.slice(0, 120)}`);
+          return request.abort("blockedbyclient");
+        },
+        () => request.abort("blockedbyclient"),
+      ).catch(() => undefined); // the page may already be closed
+    });
 
     // waitUntil networkidle0 so remote logos and signature images are painted
     // before the snapshot; without it letters can render with missing branding.
