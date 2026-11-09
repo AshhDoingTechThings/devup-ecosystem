@@ -39,29 +39,34 @@ function CountUp({ end, duration = 2 }: { end: number; duration?: number }) {
   return <span ref={ref}>{count}</span>;
 }
 
+type Stat = { value: number | null; prefix: string; suffix: string; label: string };
+
+/** Live counts only: null shows a dash until the real number arrives. */
+const liveStats = (d?: { totalStartups?: number; totalUsers?: number; totalJobs?: number }): Stat[] => [
+  { value: d?.totalStartups ?? null, prefix: "", suffix: "+", label: "Active Startups" },
+  // A published figure, not a count from the API.
+  { value: 4, prefix: "₹", suffix: "Cr+", label: "Funding Unlocked" },
+  { value: d?.totalUsers ?? null, prefix: "", suffix: "+", label: "Student Builders" },
+  { value: d?.totalJobs ?? null, prefix: "", suffix: "", label: "Open Roles" },
+];
+
+/** A count, or a dash while it is unknown — never a made-up number. */
+function Figure({ value }: { value: number | null }) {
+  return value === null ? <span aria-label="not available">—</span> : <CountUp end={value} duration={2} />;
+}
+
 export default function LiveStats() {
-  const [stats, setStats] = useState([
-    { value: 23, prefix: "", suffix: "+", label: "Active Startups" },
-    { value: 4, prefix: "₹", suffix: "Cr+", label: "Funding Unlocked" },
-    { value: 1200, prefix: "", suffix: "+", label: "Student Builders" },
-    { value: 48, prefix: "", suffix: "hr", label: "Average Response" },
-  ]);
+  // Previously this started at, and fell back to, invented figures (23
+  // startups, 1,200 students, 48 roles), and replaced a real 0 with them.
+  const [stats, setStats] = useState<Stat[]>(liveStats());
 
   useEffect(() => {
     fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/stats`)
       .then(res => res.json())
       .then(data => {
-        if (data.success && data.data) {
-          const d = data.data;
-          setStats([
-            { value: d.totalStartups || 23, prefix: "", suffix: "+", label: "Active Startups" },
-            { value: 4, prefix: "₹", suffix: "Cr+", label: "Funding Unlocked" },
-            { value: d.totalUsers || 1200, prefix: "", suffix: "+", label: "Student Builders" },
-            { value: d.totalJobs || 48, prefix: "", suffix: "", label: "Open Roles" },
-          ]);
-        }
+        if (data.success && data.data) setStats(liveStats(data.data));
       })
-      .catch(() => {}); // keep fallback values
+      .catch(() => {}); // the counts stay as dashes
   }, []);
 
   const isMobile = useIsMobile();
@@ -88,7 +93,7 @@ export default function LiveStats() {
                 fontWeight: 800, color: '#ffffff',
                 lineHeight: 1,
               }}>
-                {stat.prefix}<CountUp end={stat.value} duration={2} />{stat.suffix}
+                {stat.prefix}<Figure value={stat.value} />{stat.value !== null && stat.suffix}
               </div>
               <div style={{
                 fontFamily: 'var(--font-inter), sans-serif', fontSize: 12,
@@ -149,9 +154,9 @@ export default function LiveStats() {
                     lineHeight: 1
                   }}
                 >
-                  <CountUp end={stat.value} duration={2} />
+                  <Figure value={stat.value} />
                 </span>
-                {stat.suffix && (
+                {stat.suffix && stat.value !== null && (
                   <span 
                     style={{
                       fontFamily: "var(--font-syne), sans-serif",

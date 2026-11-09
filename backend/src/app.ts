@@ -178,9 +178,12 @@ app.get("/api/stats", async (req: Request, res: Response) => {
       data: { totalStartups, totalUsers, totalJobs, activeHackathons },
     });
   } catch {
-    res.status(200).json({
-      success: true,
-      data: { totalStartups: 23, totalUsers: 1200, totalJobs: 48, activeHackathons: 4 },
+    // Report the failure. This used to answer "success" with invented figures
+    // (23 startups, 1,200 users, 48 jobs) whenever the database was down.
+    res.status(503).json({
+      success: false,
+      error: "Statistics are temporarily unavailable.",
+      code: "STATS_UNAVAILABLE",
     });
   }
 });
