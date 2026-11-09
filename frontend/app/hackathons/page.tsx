@@ -60,7 +60,7 @@ export default function HackathonsPage() {
   useEffect(() => {
     Promise.all([
       fetch(
-        `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"}/api/hackathons`,
+        `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"}/api/hackathons?limit=100`,
       ),
       fetch(
         `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"}/api/hackathons/featured`,

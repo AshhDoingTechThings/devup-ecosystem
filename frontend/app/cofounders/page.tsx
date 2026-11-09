@@ -83,7 +83,7 @@ export default function CoFoundersPage() {
   };
 
   useEffect(() => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/cofounders`)
+    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/cofounders?limit=100`)
       .then(res => res.json())
       .then(data => {
         if (data.success && data.data) {

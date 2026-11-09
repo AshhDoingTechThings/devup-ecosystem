@@ -66,7 +66,7 @@ export default function CareersPage() {
   const [bottomSheetOpen, setBottomSheetOpen] = useState(false);
 
   useEffect(() => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/jobs`)
+    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/jobs?limit=100`)
       .then(res => res.json())
       .then(data => {
         if (data.success && data.data) {

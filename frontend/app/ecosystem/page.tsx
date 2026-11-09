@@ -54,7 +54,7 @@ export default function EcosystemPage() {
   const isMobile = useIsMobile();
 
   useEffect(() => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/startups`)
+    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/startups?limit=100`)
       .then(res => res.json())
       .then(data => {
         if (data.success && data.data) {
