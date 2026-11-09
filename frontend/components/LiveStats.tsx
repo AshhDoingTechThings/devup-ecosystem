@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { motion, useInView } from "framer-motion";
 import { useIsMobile } from "@/lib/hooks/useIsMobile";
+import { useLiveStats } from "@/lib/hooks/useLiveStats";
 
 function CountUp({ end, duration = 2 }: { end: number; duration?: number }) {
   const [count, setCount] = useState(0);
@@ -58,16 +59,8 @@ function Figure({ value }: { value: number | null }) {
 export default function LiveStats() {
   // Previously this started at, and fell back to, invented figures (23
   // startups, 1,200 students, 48 roles), and replaced a real 0 with them.
-  const [stats, setStats] = useState<Stat[]>(liveStats());
-
-  useEffect(() => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/stats`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.data) setStats(liveStats(data.data));
-      })
-      .catch(() => {}); // the counts stay as dashes
-  }, []);
+  // Shared with the hero chips: one request, dashes until it answers.
+  const stats = liveStats(useLiveStats() ?? undefined);
 
   const isMobile = useIsMobile();
 

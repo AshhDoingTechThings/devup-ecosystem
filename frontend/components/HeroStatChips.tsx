@@ -1,14 +1,19 @@
 'use client'
 import { motion } from 'framer-motion'
-
-const CHIPS = [
-  { label: 'Active Startups', value: '23+', top: '8%', left: '4%', delay: 0.2 },
-  { label: 'Funding Unlocked', value: '₹4Cr+', top: '70%', left: '2%', delay: 0.35 },
-  { label: 'Student Builders', value: '1.2K', top: '12%', left: '78%', delay: 0.5 },
-  { label: 'Cities', value: '6', top: '72%', left: '80%', delay: 0.65 },
-]
+import { useLiveStats, compactCount } from '@/lib/hooks/useLiveStats'
 
 export default function HeroStatChips() {
+  // The startup and student counts are live; they used to be fixed at "23+"
+  // and "1.2K" whatever the database said. The funding and city figures are
+  // published copy, not counts.
+  const live = useLiveStats()
+  const CHIPS = [
+    { label: 'Active Startups', value: live ? `${live.totalStartups}+` : '—', top: '8%', left: '4%', delay: 0.2 },
+    { label: 'Funding Unlocked', value: '₹4Cr+', top: '70%', left: '2%', delay: 0.35 },
+    { label: 'Student Builders', value: live ? compactCount(live.totalUsers) : '—', top: '12%', left: '78%', delay: 0.5 },
+    { label: 'Cities', value: '6', top: '72%', left: '80%', delay: 0.65 },
+  ]
+
   return (
     <>
       <style>
