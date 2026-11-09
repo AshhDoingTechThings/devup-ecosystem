@@ -28,10 +28,16 @@ export const validate = (schema: ZodSchema) => {
       next();
     } catch (error) {
       if (error instanceof ZodError) {
+        const errors = error.issues.map((e: any) => ({ path: e.path.join('.'), message: e.message }));
+        // Same envelope as every other error ({ success, error, code }), so
+        // clients can read one shape. `message` and `errors` stay for the
+        // screens that already show per-field messages from them.
         return res.status(400).json({
-          code: 400,
+          success: false,
+          error: errors[0]?.message ?? "Invalid request",
+          code: "VALIDATION_ERROR",
           message: "Validation Error",
-          errors: error.issues.map((e: any) => ({ path: e.path.join('.'), message: e.message }))
+          errors,
         });
       }
       next(error);

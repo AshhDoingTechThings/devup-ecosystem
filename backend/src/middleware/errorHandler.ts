@@ -34,6 +34,12 @@ export const errorHandler = (
       statusCode = 404;
       message = "Record not found";
       code = "NOT_FOUND";
+    } else if (err.code === "P2003") {
+      // A foreign key pointed at a row that does not exist — an id from the
+      // request that names nothing. The client's input, not a server fault.
+      statusCode = 400;
+      message = "A referenced record does not exist";
+      code = "INVALID_REFERENCE";
     } else if (err.code === "P2024") {
       // Connection pool exhausted — DB is overloaded
       statusCode = 503;

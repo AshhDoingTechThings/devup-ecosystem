@@ -7,7 +7,7 @@ import { authLimiter } from "./middleware/rateLimit";
 import { env } from "./config/env";
 import { applyTrustProxy } from "./config/proxy";
 import { morganMiddleware } from "./middleware/logger";
-import { errorHandler } from "./middleware/errorHandler";
+import { AppError, errorHandler } from "./middleware/errorHandler";
 
 import { setupSwagger } from "./lib/swagger";
 import { prisma } from "./lib/prisma";
@@ -72,7 +72,9 @@ app.use(
       if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        callback(new Error(`CORS blocked: ${origin}`));
+        // A plain Error became a 500 "Internal Server Error" (and an error log
+        // line) for every request from an origin we simply don't serve.
+        callback(new AppError(403, "This origin is not allowed", "CORS_FORBIDDEN"));
       }
     },
     credentials: true,
