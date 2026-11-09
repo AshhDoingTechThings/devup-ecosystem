@@ -724,6 +724,94 @@ function run(dbUrl: string) {
     });
   });
 
+  describe("password reset", () => {
+    const post = (p: string, body: unknown) =>
+      fetch(`${apiBase}${p}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const canSignIn = async (to: string, password: string) =>
+      !(await createSessionClient().auth.signInWithPassword({ email: to, password })).error;
+    const lastResetToken = (to: string) => {
+      const mail = [...mails].reverse().find((m) => m.to === to && /reset-password#token=/.test(m.html));
+      assert.ok(mail, `no reset email to ${to}`);
+      return /reset-password#token=([A-Za-z0-9_-]+)/.exec(mail!.html)![1];
+    };
+
+    test("a verified account gets a one-hour link that sets a new password and signs out everywhere", async () => {
+      const to = email("reset");
+      await signupAndVerify(to, "old-password-1");
+      const session = (await createSessionClient().auth.signInWithPassword({ email: to, password: "old-password-1" })).data.session!.access_token;
+
+      const asked = await post("/api/auth/forgot-password", { email: to.toUpperCase() });
+      assert.equal(asked.status, 202);
+      const mail = [...mails].reverse().find((m) => m.to === to)!;
+      assert.match(mail.subject, /Reset your DevUp password/);
+      const token = lastResetToken(to);
+      const row = await prisma.emailVerification.findUnique({ where: { tokenHash: sha256(token) } });
+      const minutes = (row.expiresAt.getTime() - Date.now()) / 60_000;
+      assert.ok(minutes > 55 && minutes <= 60, `expires in about an hour (${minutes.toFixed(1)} min)`);
+
+      const outsBefore = signOuts.length;
+      const done = await post("/api/auth/reset-password", { token, password: "new-password-1" });
+      assert.equal(done.status, 200, await done.clone().text());
+      assert.deepEqual((await done.json()).data, { reset: true });
+      assert.equal(await canSignIn(to, "old-password-1"), false, "the old password stops working");
+      assert.equal(await canSignIn(to, "new-password-1"), true);
+      assert.ok(signOuts.slice(outsBefore).some((s) => s.scope === "global"), "every session is revoked");
+      assert.ok(![...sessions.keys()].includes(session), "the session from before the reset is gone");
+
+      const again = await post("/api/auth/reset-password", { token, password: "third-password-1" });
+      assert.equal(again.status, 400, "the link works once");
+      assert.equal((await again.json()).code, "INVALID_VERIFICATION_LINK");
+      assert.equal(await canSignIn(to, "new-password-1"), true);
+    });
+
+    test("the answer never says whether an address has an account", async () => {
+      const to = email("reset-known");
+      await signupAndVerify(to);
+      const before = mails.length;
+      const [known, unknown] = await Promise.all([
+        post("/api/auth/forgot-password", { email: to }),
+        post("/api/auth/forgot-password", { email: email("reset-nobody") }),
+      ]);
+      assert.equal(known.status, 202);
+      assert.equal(unknown.status, 202);
+      assert.deepEqual(await known.json(), await unknown.json());
+      assert.equal(mails.length, before + 1, "only the real account is emailed");
+    });
+
+    test("an unconfirmed account is sent its confirmation link instead", async () => {
+      const to = email("reset-unverified");
+      await auth.register({ email: to, password: "registrant-pass-1" });
+      const before = mails.filter((m) => m.to === to).length;
+      assert.equal((await post("/api/auth/forgot-password", { email: to })).status, 202);
+      const sent = mails.filter((m) => m.to === to);
+      assert.equal(sent.length, before + 1);
+      assert.match(sent[sent.length - 1].html, /verify-email#token=/);
+    });
+
+    test("one address cannot be used to flood an inbox (forgot-password and resend alike)", async () => {
+      // authLimiter skips successful responses, and these always answer 202,
+      // so it used to count none of them.
+      for (const [p, verified] of [["/api/auth/forgot-password", true], ["/api/auth/resend-verification", false]] as const) {
+        const target = email("flood-http");
+        if (verified) await signupAndVerify(target);
+        else await auth.register({ email: target, password: "registrant-pass-1" });
+        const statuses: number[] = [];
+        for (let i = 0; i < 8; i++) statuses.push((await post(p, { email: target })).status);
+        assert.deepEqual(statuses, [202, 202, 202, 202, 202, 429, 429, 429], `${p}: ${statuses.join(",")}`);
+        // The signup email counts toward the account's five links an hour.
+        assert.equal(mails.filter((m) => m.to === target).length, 5, `${p}: five emails an hour at most`);
+      }
+    });
+
+    test("bad input is a 400", async () => {
+      assert.equal((await post("/api/auth/forgot-password", { email: "not-an-email" })).status, 400);
+      assert.equal((await post("/api/auth/reset-password", { token: "x".repeat(43), password: "short" })).status, 400);
+      const bogus = await post("/api/auth/reset-password", { token: "x".repeat(43), password: "long-enough-1" });
+      assert.equal(bogus.status, 400);
+      assert.equal((await bogus.json()).code, "INVALID_VERIFICATION_LINK");
+    });
+  });
+
   describe("tokens never reach the logs", () => {
     test("request URLs are logged with tokens cut out", () => {
       assert.equal(redactUrl("/api/startups/invites/abcDEF123/accept"), "/api/startups/invites/[redacted]/accept");

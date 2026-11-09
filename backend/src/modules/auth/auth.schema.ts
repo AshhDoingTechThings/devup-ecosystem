@@ -29,6 +29,19 @@ export const verifyEmailSchema = z.object({
   })
 });
 
+export const forgotPasswordSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+  })
+});
+
+export const resetPasswordSchema = z.object({
+  body: z.object({
+    token: z.string().min(20).max(200),
+    password: z.string().min(8, "Password must be at least 8 characters").max(128),
+  })
+});
+
 export const resendVerificationSchema = z.object({
   body: z.object({
     email: z.string().email(),

@@ -32,6 +32,19 @@ export class AuthController {
     });
   }
 
+  async forgotPassword(req: Request, res: Response) {
+    await authService.requestPasswordReset(req.body.email);
+    res.status(202).json({
+      success: true,
+      data: { message: "If that address has a DevUp account, a reset link is on its way." },
+    });
+  }
+
+  async resetPassword(req: Request, res: Response) {
+    const data = await authService.resetPassword(req.body.token, req.body.password);
+    res.status(200).json({ success: true, data });
+  }
+
   async login(req: Request, res: Response) {
     const data = await authService.login(req.body);
     res.status(200).json({ success: true, data: { ...data, user: safeUser(data.user) } });

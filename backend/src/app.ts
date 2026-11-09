@@ -3,7 +3,7 @@ import express, { Request, Response } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
-import { authLimiter } from "./middleware/rateLimit";
+import { authLimiter, accountEmailLimiter } from "./middleware/rateLimit";
 import { env } from "./config/env";
 import { applyTrustProxy } from "./config/proxy";
 import { morganMiddleware } from "./middleware/logger";
@@ -198,7 +198,10 @@ app.use("/api/auth/login", authLimiter);
 app.use("/api/auth/register", authLimiter);
 app.use("/api/auth/refresh", authLimiter);
 app.use("/api/auth/verify-email", authLimiter);
-app.use("/api/auth/resend-verification", authLimiter);
+// These always answer 202, which authLimiter (it skips successes) never counted.
+app.use("/api/auth/resend-verification", accountEmailLimiter);
+app.use("/api/auth/forgot-password", accountEmailLimiter);
+app.use("/api/auth/reset-password", authLimiter);
 
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);

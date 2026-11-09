@@ -77,6 +77,18 @@ export const Emails = {
       footnote: `If the button does not work, copy this link into your browser:<br>${link}`,
     }),
 
+  passwordReset: (link: string, hours: number) =>
+    renderEmail({
+      heading: "Reset your password",
+      preheader: "Choose a new password for your DevUp account",
+      body:
+        p("Someone — hopefully you — asked to reset the password for your DevUp Ecosystem account.") +
+        p(`Use the button to choose a new one. The link works once and expires in ${hours === 1 ? "1 hour" : `${hours} hours`}. Choosing a new password signs you out everywhere else.`) +
+        p("If you did not ask for this, ignore this email. Your password has not changed."),
+      cta: { label: "Choose a new password", url: link },
+      footnote: `If the button does not work, copy this link into your browser:<br>${link}`,
+    }),
+
   accountExists: (loginLink: string) =>
     renderEmail({
       heading: "You already have a DevUp account",

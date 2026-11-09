@@ -12,6 +12,7 @@ import {
   sendAccountExistsNotice,
   verifyEmail,
   resendVerification,
+  requestPasswordReset,
   assertVerificationMailConfigured,
 } from "./verification.service";
 
@@ -332,6 +333,16 @@ export class AuthService {
 
   resendVerification(email: string) {
     return resendVerification(email);
+  }
+
+  requestPasswordReset(email: string) {
+    return requestPasswordReset(email);
+  }
+
+  /** Same proof and effect as confirming an email: password set, sessions revoked. */
+  async resetPassword(token: string, password: string) {
+    await verifyEmail(token, password);
+    return { reset: true };
   }
 
   async logout(token: string) {

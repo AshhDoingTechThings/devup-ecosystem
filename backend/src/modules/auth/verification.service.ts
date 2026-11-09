@@ -30,6 +30,8 @@ import { productionGaps } from "../../config/env";
  */
 
 export const VERIFICATION_TTL_HOURS = 24;
+/** Shorter than a signup link: a reset link is a live way into an existing account. */
+export const PASSWORD_RESET_TTL_HOURS = 1;
 const MAX_LINKS_PER_HOUR = 5;
 
 /** One message for every failure, so the response says nothing about who exists. */
@@ -58,6 +60,10 @@ export function verificationLink(token: string) {
   return `${WORKSPACE_URL}/auth/verify-email#token=${token}`;
 }
 
+export function passwordResetLink(token: string) {
+  return `${WORKSPACE_URL}/auth/reset-password#token=${token}`;
+}
+
 async function send(to: string, subject: string, html: string) {
   const { error } = await resend.emails.send({ from: MAIL_FROM, to, subject, html });
   // The caller always answers the same way whether or not mail went out, so a
@@ -65,8 +71,15 @@ async function send(to: string, subject: string, html: string) {
   if (error) logger.error(`account email "${subject}" not delivered: ${error.message}`);
 }
 
-/** Issues a fresh link for an unverified account and emails it. Older links stop working. */
-export async function issueVerification(userId: string, email: string) {
+/**
+ * Issues a fresh link and emails it. Older links stop working.
+ *
+ * A password reset is the same proof as a signup confirmation — the inbox's
+ * owner follows a link only that inbox received, sets the password, and every
+ * session is revoked — so both use these links; only the wording and the
+ * lifetime differ.
+ */
+export async function issueVerification(userId: string, email: string, purpose: "verify" | "reset" = "verify") {
   const recent = await prisma.emailVerification.count({
     where: { userId, createdAt: { gte: new Date(Date.now() - 60 * 60_000) } },
   });
@@ -85,12 +98,16 @@ export async function issueVerification(userId: string, email: string) {
         userId,
         email,
         tokenHash: hash,
-        expiresAt: new Date(now.getTime() + VERIFICATION_TTL_HOURS * 60 * 60_000),
+        expiresAt: new Date(now.getTime() + (purpose === "reset" ? PASSWORD_RESET_TTL_HOURS : VERIFICATION_TTL_HOURS) * 60 * 60_000),
       },
     }),
   ]);
 
-  await send(email, "Confirm your email for DevUp", Emails.verifyEmail(verificationLink(token), VERIFICATION_TTL_HOURS));
+  if (purpose === "reset") {
+    await send(email, "Reset your DevUp password", Emails.passwordReset(passwordResetLink(token), PASSWORD_RESET_TTL_HOURS));
+  } else {
+    await send(email, "Confirm your email for DevUp", Emails.verifyEmail(verificationLink(token), VERIFICATION_TTL_HOURS));
+  }
 }
 
 /** Tells the owner of an already-verified address that someone tried to sign up with it. */
@@ -114,6 +131,25 @@ export async function resendVerification(rawEmail: string) {
   if (users.length === 1 && !users[0].emailVerifiedAt) {
     await issueVerification(users[0].id, users[0].email);
   }
+}
+
+/**
+ * Public "I forgot my password". Always succeeds from the caller's point of
+ * view, so it never reveals whether an address has an account. A verified
+ * account gets a one-hour reset link; an unverified one gets its confirmation
+ * link instead, which sets the password just the same.
+ */
+export async function requestPasswordReset(rawEmail: string) {
+  assertVerificationMailConfigured();
+  const email = String(rawEmail ?? "").trim().toLowerCase();
+  if (!email) return;
+  const users = await prisma.user.findMany({
+    where: { email: { equals: email, mode: "insensitive" } },
+    select: { id: true, email: true, emailVerifiedAt: true },
+    take: 2,
+  });
+  if (users.length !== 1) return;
+  await issueVerification(users[0].id, users[0].email, users[0].emailVerifiedAt ? "reset" : "verify");
 }
 
 /**

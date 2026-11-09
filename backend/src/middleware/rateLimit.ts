@@ -149,3 +149,29 @@ export const messageLimiter = rateLimit({
     code: "RATE_LIMITED",
   },
 });
+
+/**
+ * "Email me a link" endpoints (resend verification, forgot password). These
+ * always answer 202 so they never reveal whether an address has an account,
+ * which made them invisible to authLimiter: it skips successful responses, so
+ * not one of these requests was ever counted. Here every request counts.
+ */
+export const accountEmailLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const email = String((req.body as { email?: string } | undefined)?.email ?? "").toLowerCase();
+    return `${ipKeyGenerator(req.ip ?? "")}:${email}`;
+  },
+  store: redis ? new RedisStore({
+    sendCommand: (...args: string[]) => redis!.call(args[0], ...args.slice(1)) as any,
+    prefix: "rl-account-mail:",
+  }) : undefined,
+  message: {
+    success: false,
+    error: "Too many requests for this address. Please wait 15 minutes and try again.",
+    code: "RATE_LIMITED",
+  },
+});
