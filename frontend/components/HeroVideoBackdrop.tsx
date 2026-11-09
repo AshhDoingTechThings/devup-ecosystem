@@ -2,19 +2,33 @@
 import { useEffect, useRef, useState } from 'react'
 import { getMediaUrl } from '@/lib/mediaMap'
 
+/** The same look for the moving and the still backdrop. */
+const BACKDROP_STYLE = {
+  position: 'absolute',
+  top: '50%', left: '50%',
+  width: '100%', height: '100%',
+  objectFit: 'cover',
+  transform: 'translate(-50%, -50%) scale(1.35)',
+  // Desaturate + darken toward the site palette via filter —
+  // raw space footage is too bright/colorful for this dark UI
+  filter: 'brightness(0.45) saturate(0.55) contrast(1.05)',
+} as const
+
 export default function HeroVideoBackdrop() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [loaded, setLoaded] = useState(false)
+  /*
+   * The video is 5.7MB (WebM) / 7.5MB (MP4). It used to load on every device:
+   * phones on mobile data, Save-Data connections, and people who asked for
+   * reduced motion (it was paused for them, but still downloaded). Those now
+   * get the poster image only.
+   */
+  const [playVideo, setPlayVideo] = useState(false)
   useEffect(() => {
-    // Respect users with reduced-motion preference — 
-    // show the static poster instead of autoplaying video
-    const prefersReducedMotion = window.matchMedia(
-      '(prefers-reduced-motion: reduce)'
-    ).matches
-
-    if (prefersReducedMotion && videoRef.current) {
-      videoRef.current.pause()
-    }
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const smallScreen = window.matchMedia('(max-width: 767px)').matches
+    const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData === true
+    setPlayVideo(!reducedMotion && !smallScreen && !saveData)
   }, [])
 
   useEffect(() => {
@@ -36,7 +50,7 @@ export default function HeroVideoBackdrop() {
     if (heroSection) observer.observe(heroSection)
 
     return () => observer.disconnect()
-  }, [])
+  }, [playVideo])
 
   return (
     <div style={{
@@ -45,30 +59,24 @@ export default function HeroVideoBackdrop() {
       overflow: 'hidden',
       zIndex: 0,
     }}>
-      <video
-        ref={videoRef}
-        autoPlay
-        loop
-        muted
-        playsInline
-        poster={getMediaUrl('video/hero-space-poster.jpg')}
-        onLoadedData={() => setLoaded(true)}
-        style={{
-          position: 'absolute',
-          top: '50%', left: '50%',
-          width: '100%', height: '100%',
-          objectFit: 'cover',
-          transform: 'translate(-50%, -50%) scale(1.35)',
-          opacity: loaded ? 1 : 0,
-          transition: 'opacity 1.2s ease',
-          // Desaturate + darken toward the site palette via filter —
-          // raw space footage is too bright/colorful for this dark UI
-          filter: 'brightness(0.45) saturate(0.55) contrast(1.05)',
-        }}
-      >
-        <source src={getMediaUrl('video/hero-space-trimmed.webm')} type="video/webm" />
-        <source src={getMediaUrl('video/hero-space-trimmed.mp4')} type="video/mp4" />
-      </video>
+      {playVideo ? (
+        <video
+          ref={videoRef}
+          autoPlay
+          loop
+          muted
+          playsInline
+          poster={getMediaUrl('video/hero-space-poster.jpg')}
+          onLoadedData={() => setLoaded(true)}
+          style={{ ...BACKDROP_STYLE, opacity: loaded ? 1 : 0, transition: 'opacity 1.2s ease' }}
+        >
+          <source src={getMediaUrl('video/hero-space-trimmed.webm')} type="video/webm" />
+          <source src={getMediaUrl('video/hero-space-trimmed.mp4')} type="video/mp4" />
+        </video>
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element -- a decorative full-bleed backdrop, sized by CSS
+        <img src={getMediaUrl('video/hero-space-poster.jpg')} alt="" aria-hidden="true" style={BACKDROP_STYLE} />
+      )}
 
       {/* Vignette + color-match overlay — pulls the video toward
           the site's near-black background at the edges so it blends
