@@ -1,5 +1,18 @@
 import { prisma } from '../../lib/prisma';
 import { AppError } from '../../middleware/errorHandler';
+import { PUBLIC_USER_SELECT } from '../../lib/publicProfile';
+
+/**
+ * What each side of a request sees of the other.
+ *
+ * Someone who has only asked to connect gets the public profile, the same as
+ * the founder directory shows. Once both have agreed, the email is shared too:
+ * the connections page uses it to invite a connection onto a startup team.
+ * Never phone, grades, resume, role or sign-in data — and never passwordHash,
+ * which a plain `include` used to put in every row.
+ */
+const REQUESTER = { select: PUBLIC_USER_SELECT } as const;
+const CONNECTED = { select: { ...PUBLIC_USER_SELECT, email: true } } as const;
 
 export async function sendConnectionRequest(params: {
   fromUserId: string;
@@ -20,6 +33,9 @@ export async function sendConnectionRequest(params: {
   if (!allowedRoles.includes(fromUser?.role || '')) {
     throw new AppError(403, "Only verified roles can send connection requests");
   }
+
+  const target = await prisma.user.findUnique({ where: { id: params.toUserId }, select: { id: true } });
+  if (!target) throw new AppError(404, "That person could not be found", "USER_NOT_FOUND");
 
   const existing = await prisma.connectionRequest.findFirst({
     where: {
@@ -111,12 +127,12 @@ export async function respondToConnection(params: {
 export async function getConnections(userId: string) {
   const pendingConnections = await prisma.connectionRequest.findMany({
     where: { toUserId: userId, status: 'PENDING' },
-    include: { fromUser: { include: { profile: true } } },
+    include: { fromUser: REQUESTER },
   });
 
   const pendingCofounder = await prisma.cofounderRequest.findMany({
     where: { toUserId: userId, status: 'PENDING' },
-    include: { fromUser: { include: { profile: true } } },
+    include: { fromUser: REQUESTER },
   });
 
   const acceptedConnections = await prisma.connectionRequest.findMany({
@@ -124,10 +140,7 @@ export async function getConnections(userId: string) {
       status: 'ACCEPTED',
       OR: [{ fromUserId: userId }, { toUserId: userId }],
     },
-    include: {
-      fromUser: { include: { profile: true } },
-      toUser: { include: { profile: true } },
-    },
+    include: { fromUser: CONNECTED, toUser: CONNECTED },
   });
 
   const acceptedCofounder = await prisma.cofounderRequest.findMany({
@@ -135,10 +148,7 @@ export async function getConnections(userId: string) {
       status: 'ACCEPTED',
       OR: [{ fromUserId: userId }, { toUserId: userId }],
     },
-    include: {
-      fromUser: { include: { profile: true } },
-      toUser: { include: { profile: true } },
-    },
+    include: { fromUser: CONNECTED, toUser: CONNECTED },
   });
 
   return {
