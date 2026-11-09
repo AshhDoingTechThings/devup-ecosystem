@@ -1,3 +1,4 @@
+import { isPlatformAdmin } from "../../middleware/auth";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../middleware/errorHandler";
 import { uploadFile } from "../../lib/storage";
@@ -6,7 +7,6 @@ import { env } from "../../config/env";
 import { NEVER_RETURNED } from "../../lib/publicProfile";
 
 /** DevUp staff. Everyone else sees only their own account. */
-const isPlatformAdmin = (role: string) => role === "ADMIN" || role === "SUPER_ADMIN";
 
 /**
  * A user record is for its owner and DevUp staff. Anyone else gets the same 404
@@ -50,7 +50,7 @@ export class UsersService {
   async updateUser(id: string, requesterId: string, data: any) {
     if (id !== requesterId) {
       const requester = await prisma.user.findUnique({ where: { id: requesterId } });
-      if (requester?.role !== "ADMIN") {
+      if (!isPlatformAdmin(requester?.role)) {
         throw new AppError(403, "Not authorized to update this user");
       }
     }
@@ -155,7 +155,7 @@ export class UsersService {
 
   async deleteUser(id: string, requesterId: string) {
     const requester = await prisma.user.findUnique({ where: { id: requesterId } });
-    if (requester?.role !== "ADMIN" && requester?.role !== "SUPER_ADMIN") {
+    if (!isPlatformAdmin(requester?.role)) {
       throw new AppError(403, "Not authorized to delete users");
     }
 

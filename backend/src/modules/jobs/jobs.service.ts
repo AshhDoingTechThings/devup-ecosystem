@@ -1,3 +1,4 @@
+import { isPlatformAdmin } from "../../middleware/auth";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../middleware/errorHandler";
 import { resend, EmailTemplates, MAIL_FROM } from "../../lib/resend";
@@ -87,7 +88,7 @@ export class JobsService {
     const isMember = canManageStartup(startup.members);
     const isLegacyFounder = startup.founders.some(f => f.id === userId);
 
-    if (role !== "ADMIN" && !isMember && !isLegacyFounder) {
+    if (!isPlatformAdmin(role) && !isMember && !isLegacyFounder) {
       throw new AppError(403, "Not authorized to post a job for this startup");
     }
 
@@ -112,7 +113,7 @@ export class JobsService {
     const isMember = canViewApplicants(job.startup.members);
     const isLegacyFounder = job.startup.founders.some(f => f.id === userId);
 
-    if (role !== "ADMIN" && !isMember && !isLegacyFounder) {
+    if (!isPlatformAdmin(role) && !isMember && !isLegacyFounder) {
       throw new AppError(403, "Not authorized to update this job");
     }
 
@@ -136,7 +137,7 @@ export class JobsService {
     const isMember = canViewApplicants(job.startup.members);
     const isLegacyFounder = job.startup.founders.some(f => f.id === userId);
 
-    if (role !== "ADMIN" && !isMember && !isLegacyFounder) {
+    if (!isPlatformAdmin(role) && !isMember && !isLegacyFounder) {
       throw new AppError(403, "Not authorized to delete this job");
     }
 
@@ -217,7 +218,7 @@ export class JobsService {
     const isMember = canViewApplicants(job.startup.members);
     const isLegacyFounder = job.startup.founders.some(f => f.id === userId);
 
-    if (role !== "ADMIN" && !isMember && !isLegacyFounder) {
+    if (!isPlatformAdmin(role) && !isMember && !isLegacyFounder) {
       throw new AppError(403, "Not authorized to view applications for this job");
     }
 

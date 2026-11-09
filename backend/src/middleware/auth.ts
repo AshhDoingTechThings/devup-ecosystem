@@ -50,13 +50,21 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
+/**
+ * Platform staff. SUPER_ADMIN outranks ADMIN, so it passes every check that an
+ * ADMIN passes — previously 27 routes and a dozen inline checks named only
+ * "ADMIN" while others named both, so a super admin was refused at random.
+ */
+export const isPlatformAdmin = (role?: string | null) => role === "ADMIN" || role === "SUPER_ADMIN";
+
 export const requireRole = (roles: string[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
       return next(new AppError(401, "Not authorized", "UNAUTHORIZED"));
     }
 
-    if (!roles.includes(req.user.role)) {
+    const allowed = roles.includes(req.user.role) || (req.user.role === "SUPER_ADMIN" && roles.includes("ADMIN"));
+    if (!allowed) {
       return next(new AppError(403, "Forbidden, insufficient permissions", "FORBIDDEN"));
     }
 

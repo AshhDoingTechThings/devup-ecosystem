@@ -4,6 +4,7 @@ import { AppError } from "../../middleware/errorHandler";
 import { env } from "../../config/env";
 import { uploadFile } from "../../lib/storage";
 import { objectKey, verifyUpload } from "../../lib/uploads";
+import { isPlatformAdmin } from "../../middleware/auth";
 import { prisma } from "../../lib/prisma";
 
 export class DocumentsController {
@@ -30,7 +31,7 @@ export class DocumentsController {
 
     if (!document) throw new AppError(404, "Document not found");
 
-    if (req.user!.role !== "ADMIN") {
+    if (!isPlatformAdmin(req.user!.role)) {
       const isMember = await prisma.startupMember.findFirst({
         where: { startupId: document.startupId, userId: req.user!.id, status: 'ACTIVE' }
       });
@@ -54,7 +55,7 @@ export class DocumentsController {
     res.status(200).json({ success: true, data });
   }
   async getDocuments(req: Request, res: Response) {
-    if (req.user!.role !== "ADMIN") {
+    if (!isPlatformAdmin(req.user!.role)) {
       throw new AppError(403, "Not authorized");
     }
     const documents = await prisma.document.findMany({

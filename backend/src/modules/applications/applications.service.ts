@@ -1,3 +1,4 @@
+import { isPlatformAdmin } from "../../middleware/auth";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../middleware/errorHandler";
 import { uploadFile } from "../../lib/storage";
@@ -65,7 +66,7 @@ export class ApplicationsService {
     const application = await prisma.application.findUnique({ where: { id } });
     if (!application) throw new AppError(404, "Application not found");
     
-    if (role !== "ADMIN" && application.submittedBy !== userId) {
+    if (!isPlatformAdmin(role) && application.submittedBy !== userId) {
       throw new AppError(403, "Not authorized");
     }
 

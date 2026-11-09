@@ -1,3 +1,4 @@
+import { isPlatformAdmin } from "../../middleware/auth";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../middleware/errorHandler";
 import { uploadFile } from "../../lib/storage";
@@ -25,7 +26,6 @@ const TEAM_EDITABLE = [
 /** Presentation and moderation flags only DevUp may set. */
 const PLATFORM_EDITABLE = ["type", "isVerified", "isFeatured", "isActive"] as const;
 
-const isPlatformAdmin = (role: string) => role === "ADMIN" || role === "SUPER_ADMIN";
 
 function writableFields(data: Record<string, unknown> | undefined, role: string) {
   const allowed: readonly string[] = isPlatformAdmin(role)
@@ -144,7 +144,7 @@ export class StartupsService {
     const isMember = canManageStartup(startup.members);
     const isLegacyFounder = startup.founders.some(f => f.id === requesterId);
 
-    if (role !== "ADMIN" && !isMember && !isLegacyFounder) {
+    if (!isPlatformAdmin(role) && !isMember && !isLegacyFounder) {
       throw new AppError(403, "Not authorized to update this startup");
     }
     return startup;
@@ -195,7 +195,7 @@ export class StartupsService {
     const isMember = isAnyMember(startup.members);
     const isLegacyFounder = startup.founders.some(f => f.id === requesterId);
 
-    if (role !== "ADMIN" && !isMember && !isLegacyFounder) {
+    if (!isPlatformAdmin(role) && !isMember && !isLegacyFounder) {
       throw new AppError(403, "Not authorized");
     }
 
@@ -216,7 +216,7 @@ export class StartupsService {
     const isMember = canManageStartup(startup.members);
     const isLegacyFounder = startup.founders.some(f => f.id === userId);
 
-    if (role !== "ADMIN" && !isMember && !isLegacyFounder) {
+    if (!isPlatformAdmin(role) && !isMember && !isLegacyFounder) {
       throw new AppError(403, "Not authorized to view applications for this startup");
     }
 
