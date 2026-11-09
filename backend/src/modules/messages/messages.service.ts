@@ -1,17 +1,50 @@
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../middleware/errorHandler";
 
+export const MAX_MESSAGE_LENGTH = 2000;
+/** The chat window shows the latest messages; older history is not paged yet. */
+const HISTORY_LIMIT = 500;
+
+/**
+ * Direct messages are for people who have agreed to connect.
+ *
+ * Previously any signed-in account could write to any user id, which made the
+ * inbox an open channel for spam to every founder on the platform. An accepted
+ * connection or co-founder request — in either direction — is now required.
+ */
+async function assertConnected(userId: string, contactId: string) {
+  if (userId === contactId) throw new AppError(400, "You cannot message yourself", "INVALID_CONTACT");
+
+  const between = {
+    status: "ACCEPTED" as const,
+    OR: [
+      { fromUserId: userId, toUserId: contactId },
+      { fromUserId: contactId, toUserId: userId },
+    ],
+  };
+  const [connection, cofounder] = await Promise.all([
+    prisma.connectionRequest.findFirst({ where: between, select: { id: true } }),
+    prisma.cofounderRequest.findFirst({ where: between, select: { id: true } }),
+  ]);
+  if (!connection && !cofounder) {
+    throw new AppError(403, "You can message people once they accept your connection request", "NOT_CONNECTED");
+  }
+}
+
 export async function getMessages(userId: string, contactId: string) {
-  const messages = await prisma.message.findMany({
+  // Only ever the caller's own conversation, so no connection check is needed
+  // to read it: a stranger's id simply has no history.
+  const latest = await prisma.message.findMany({
     where: {
       OR: [
         { senderId: userId, receiverId: contactId },
         { senderId: contactId, receiverId: userId }
       ]
     },
-    orderBy: { createdAt: "asc" }
+    orderBy: { createdAt: "desc" },
+    take: HISTORY_LIMIT,
   });
-  
+
   // Mark messages as read if the current user is the receiver
   await prisma.message.updateMany({
     where: {
@@ -24,24 +57,19 @@ export async function getMessages(userId: string, contactId: string) {
     }
   });
 
-  return messages;
+  return latest.reverse();
 }
 
 export async function sendMessage(senderId: string, receiverId: string, content: string) {
-  if (!content?.trim()) {
-    throw new AppError(400, "Message content cannot be empty");
+  const text = typeof content === "string" ? content.trim() : "";
+  if (!text) throw new AppError(400, "Message content cannot be empty");
+  if (text.length > MAX_MESSAGE_LENGTH) {
+    throw new AppError(400, `Keep messages under ${MAX_MESSAGE_LENGTH} characters`, "MESSAGE_TOO_LONG");
   }
 
-  // Optional: Verify that they are connected, but we can assume the frontend/controller enforces this
-  // or they just have an open network.
+  await assertConnected(senderId, receiverId);
 
-  const message = await prisma.message.create({
-    data: {
-      senderId,
-      receiverId,
-      content: content.trim()
-    }
+  return prisma.message.create({
+    data: { senderId, receiverId, content: text }
   });
-
-  return message;
 }

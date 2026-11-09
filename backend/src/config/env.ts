@@ -100,6 +100,9 @@ const envSchema = z.object({
   AI_RESEARCH_IP_LIMIT: positiveInt(30),            // per client IP, per window (many accounts, one host)
   AI_RESEARCH_DAILY_MAX: positiveInt(200),          // everyone together, per 24h: the spend ceiling
 
+  /** Direct messages one account may send per minute. */
+  MESSAGE_RATE_LIMIT: positiveInt(30),
+
   LOG_LEVEL: z.string().default("debug"),
   LOG_FILE: z.string().default("logs/app.log"),
 

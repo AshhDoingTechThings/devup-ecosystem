@@ -127,3 +127,25 @@ export const hackathonLeadLimiter = rateLimit({
     code: "TOO_MANY_ATTEMPTS",
   },
 });
+
+/**
+ * Sending direct messages. Per account, so one connection cannot be flooded
+ * and a compromised account cannot be used to blast every contact it has.
+ * Reading (which the chat window polls) is not limited here.
+ */
+export const messageLimiter = rateLimit({
+  windowMs: 60_000,
+  max: env.MESSAGE_RATE_LIMIT,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.user?.id ? `user:${req.user.id}` : `ip:${ipKeyGenerator(req.ip ?? "")}`),
+  store: redis ? new RedisStore({
+    sendCommand: (...args: string[]) => redis!.call(args[0], ...args.slice(1)) as any,
+    prefix: "rl-msg:",
+  }) : undefined,
+  message: {
+    success: false,
+    error: "You're sending messages too quickly. Please wait a minute.",
+    code: "RATE_LIMITED",
+  },
+});

@@ -21,6 +21,7 @@ export default function ChatBox({ contact, onClose }: ChatBoxProps) {
   const [loading, setLoading] = useState(true);
   const [newMessage, setNewMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const fetchMessages = async () => {
@@ -51,6 +52,7 @@ export default function ChatBox({ contact, onClose }: ChatBoxProps) {
     if (!newMessage.trim() || !session?.access_token) return;
     
     setSending(true);
+    setSendError("");
     try {
       const res = await api.post(`/api/messages/${contact.id}`, {
         content: newMessage
@@ -58,7 +60,9 @@ export default function ChatBox({ contact, onClose }: ChatBoxProps) {
       setMessages((prev) => [...prev, res]);
       setNewMessage("");
     } catch (err) {
-      console.error("Failed to send message", err);
+      // Not connected, too long, or sending too fast: say so instead of
+      // leaving the text in the box with nothing happening.
+      setSendError(err instanceof Error ? err.message : "Message not sent. Please try again.");
     } finally {
       setSending(false);
     }
@@ -88,7 +92,7 @@ export default function ChatBox({ contact, onClose }: ChatBoxProps) {
               <p className="text-xs text-[#a1a1a1]">Connected Founder</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 text-[#a1a1a1] hover:text-white transition-colors rounded-full hover:bg-white/5">
+          <button onClick={onClose} aria-label="Close chat" className="p-2 text-[#a1a1a1] hover:text-white transition-colors rounded-full hover:bg-white/5">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -144,16 +148,22 @@ export default function ChatBox({ contact, onClose }: ChatBoxProps) {
                 if (e.key === 'Enter') handleSend();
               }}
               placeholder="Type a message..."
+              aria-label={`Message ${contact.name}`}
+              maxLength={2000}
               className="flex-1 bg-[#1a1a1a] border border-white/10 rounded-full px-5 py-3 text-white text-sm outline-none focus:border-[#c8f135]/50 transition-colors"
             />
-            <button 
+            <button
               onClick={handleSend}
+              aria-label="Send message"
               disabled={sending || !newMessage.trim()}
               className="w-12 h-12 shrink-0 bg-[#c8f135] text-black rounded-full flex items-center justify-center hover:bg-[#b0d829] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
             </button>
           </div>
+          {sendError && (
+            <p role="alert" className="mt-2 px-2 text-xs text-red-400">{sendError}</p>
+          )}
         </div>
       </motion.div>
     </AnimatePresence>
