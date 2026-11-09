@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import * as service from "./applications.service";
+import { pageParams } from "../../../lib/listQuery";
 
 const ok = (res: Response, data: unknown, status = 200) =>
   res.status(status).json({ success: true, data });
@@ -7,14 +8,15 @@ const ok = (res: Response, data: unknown, status = 200) =>
 export class ApplicationsController {
   // ── Tenant-scoped ──────────────────────────────────
   async list(req: Request, res: Response) {
+    const { page, limit } = pageParams(req.query, { defaultLimit: 25 });
     const data = await service.list(req.db, {
       stage: req.query.stage as never,
       jobId: req.query.jobId as string,
       college: req.query.college as string,
       q: req.query.q as string,
       includeClosed: req.query.includeClosed === "true",
-      page: Number(req.query.page) || 1,
-      limit: Number(req.query.limit) || 25,
+      page,
+      limit,
     });
     ok(res, data);
   }

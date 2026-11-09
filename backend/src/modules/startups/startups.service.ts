@@ -3,7 +3,8 @@ import { AppError } from "../../middleware/errorHandler";
 import { uploadFile } from "../../lib/storage";
 import { objectKey, type VerifiedFile } from "../../lib/uploads";
 import { env } from "../../config/env";
-import { Prisma } from "@prisma/client";
+import { Prisma, Domain, Stage } from "@prisma/client";
+import { pageParams, enumParam, textParam } from "../../lib/listQuery";
 import { createStartupOwnership } from "./ownership.service";
 import { canManageStartup, isAnyMember } from "../../lib/tenantRoles";
 import { PUBLIC_USER_SELECT } from "../../lib/publicProfile";
@@ -39,8 +40,10 @@ function writableFields(data: Record<string, unknown> | undefined, role: string)
 
 export class StartupsService {
   async getStartups(query: any) {
-    const { page = 1, limit = 10, domain, stage, search } = query;
-    const skip = (Number(page) - 1) * Number(limit);
+    const { page, limit, skip } = pageParams(query);
+    const domain = enumParam(query.domain, Domain, "domain");
+    const stage = enumParam(query.stage, Stage, "stage");
+    const search = textParam(query.search, "search");
 
     const where: Prisma.StartupWhereInput = {
       isActive: true,
@@ -59,7 +62,7 @@ export class StartupsService {
       prisma.startup.findMany({
         where,
         skip,
-        take: Number(limit),
+        take: limit,
         orderBy: { createdAt: "desc" },
         // Public listing: who founded it, never how to reach them.
         include: { primaryFounder: { select: { id: true, profile: { select: { name: true } } } } }
@@ -67,11 +70,7 @@ export class StartupsService {
       prisma.startup.count({ where })
     ]);
 
-  const pageNumber = Number(page);
-  const pageLimit = Number(limit);
-  const totalPages = Math.ceil(total / pageLimit);
-
-  return { data, meta: { total, page: pageNumber, limit: pageLimit, totalPages } };
+  return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async getFeatured() {

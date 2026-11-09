@@ -2,6 +2,8 @@ import { prisma } from "../../lib/prisma";
 import { AppError } from "../../middleware/errorHandler";
 import { resend, EmailTemplates, MAIL_FROM } from "../../lib/resend";
 import { env } from "../../config/env";
+import { JobType } from "@prisma/client";
+import { pageParams, enumParam, textParam } from "../../lib/listQuery";
 import { canManageStartup, canViewApplicants } from "../../lib/tenantRoles";
 
 /**
@@ -26,8 +28,11 @@ function jobFields(data: Record<string, unknown> | undefined) {
 
 export class JobsService {
   async getJobs(query: any) {
-    const { page = 1, limit = 10, type, domain, search, startupId } = query;
-    const skip = (Number(page) - 1) * Number(limit);
+    const { page, limit, skip } = pageParams(query);
+    const type = enumParam(query.type, JobType, "type");
+    const domain = textParam(query.domain, "domain");
+    const search = textParam(query.search, "search");
+    const startupId = textParam(query.startupId, "startupId");
 
     const where: any = {};
     // When fetching by startupId (dashboard), show all jobs including inactive.
@@ -50,7 +55,7 @@ export class JobsService {
       prisma.job.findMany({
         where,
         skip,
-        take: Number(limit),
+        take: limit,
         orderBy: { createdAt: "desc" },
         include: {
           startup: { select: { id: true, name: true, logoUrl: true } },
@@ -60,11 +65,7 @@ export class JobsService {
       prisma.job.count({ where })
     ]);
 
-  const pageNumber = Number(page);
-  const pageLimit = Number(limit);
-  const totalPages = Math.ceil(total / pageLimit);
-
-  return { data, meta: { total, page: pageNumber, limit: pageLimit, totalPages } };
+  return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async getJob(id: string) {

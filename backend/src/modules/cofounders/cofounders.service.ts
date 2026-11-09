@@ -2,6 +2,8 @@ import { prisma } from "../../lib/prisma";
 import { AppError } from "../../middleware/errorHandler";
 import { resend, EmailTemplates, MAIL_FROM } from "../../lib/resend";
 import { env } from "../../config/env";
+import { CofounderRole, CofounderStage } from "@prisma/client";
+import { pageParams, enumParam } from "../../lib/listQuery";
 // Listings are public and a request can be sent to anyone, so people appear only
 // through their public profile: sending a request must not reveal the
 // recipient's phone, grades or resume.
@@ -9,8 +11,9 @@ import { PUBLIC_USER_SELECT } from "../../lib/publicProfile";
 
 export class CofoundersService {
   async getProfiles(query: any) {
-    const { page = 1, limit = 10, role, stage } = query;
-    const skip = (Number(page) - 1) * Number(limit);
+    const { page, limit, skip } = pageParams(query);
+    const role = enumParam(query.role, CofounderRole, "role");
+    const stage = enumParam(query.stage, CofounderStage, "stage");
 
     const where: any = { isActive: true };
     if (role) where.role = role;
@@ -20,18 +23,14 @@ export class CofoundersService {
       prisma.cofounderProfile.findMany({
         where,
         skip,
-        take: Number(limit),
+        take: limit,
         include: { user: { select: PUBLIC_USER_SELECT } },
         orderBy: { updatedAt: "desc" }
       }),
       prisma.cofounderProfile.count({ where })
     ]);
 
-    const pageNumber = Number(page);
-    const pageLimit = Number(limit);
-    const totalPages = Math.ceil(total / pageLimit);
-
-    return { data, meta: { total, page: pageNumber, limit: pageLimit, totalPages } };
+    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async getProfileByUserId(userId: string) {

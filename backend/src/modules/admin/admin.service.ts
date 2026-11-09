@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma";
+import { pageParams } from "../../lib/listQuery";
 
 export class AdminService {
   async getStats() {
@@ -167,15 +168,14 @@ export class AdminService {
   }
 
   async getAuditLogs(query: any) {
-    const { page = 1, limit = 20 } = query;
-    const skip = (Number(page) - 1) * Number(limit);
+    const { page, limit, skip } = pageParams(query, { defaultLimit: 20 });
 
     const [data, total] = await Promise.all([
-      prisma.auditLog.findMany({ skip, take: Number(limit), orderBy: { createdAt: "desc" } }),
+      prisma.auditLog.findMany({ skip, take: limit, orderBy: { createdAt: "desc" } }),
       prisma.auditLog.count(),
     ]);
 
-    return { data, meta: { total, page: Number(page), limit: Number(limit) } };
+    return { data, meta: { total, page, limit } };
   }
 
   async logAction(adminId: string, action: string, entity: string, entityId?: string, metadata?: any) {

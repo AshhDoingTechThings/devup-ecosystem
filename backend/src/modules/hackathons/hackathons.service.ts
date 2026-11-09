@@ -3,11 +3,14 @@ import { AppError } from "../../middleware/errorHandler";
 import { uploadFile } from "../../lib/storage";
 import { objectKey, type VerifiedFile } from "../../lib/uploads";
 import { env } from "../../config/env";
+import { HackathonMode } from "@prisma/client";
+import { pageParams, enumParam, textParam } from "../../lib/listQuery";
 
 export class HackathonsService {
   async getHackathons(query: any) {
-    const { page = 1, limit = 10, mode, search } = query;
-    const skip = (Number(page) - 1) * Number(limit);
+    const { page, limit, skip } = pageParams(query);
+    const mode = enumParam(query.mode, HackathonMode, "mode");
+    const search = textParam(query.search, "search");
 
     const where: any = { isActive: true };
     if (mode) where.mode = mode;
@@ -22,7 +25,7 @@ export class HackathonsService {
       prisma.hackathon.findMany({ 
         where, 
         skip, 
-        take: Number(limit), 
+        take: limit, 
         orderBy: { startDate: "asc" },
         include: { _count: { select: { leads: true } } }
       }),

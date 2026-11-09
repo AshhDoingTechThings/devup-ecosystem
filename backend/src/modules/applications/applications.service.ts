@@ -6,6 +6,7 @@ import { env } from "../../config/env";
 import { resend, EmailTemplates, MAIL_FROM } from "../../lib/resend";
 import { ApplicationStatus, Role } from "@prisma/client";
 import { randomBytes } from "crypto";
+import { pageParams, enumParam } from "../../lib/listQuery";
 import { createStartupOwnership } from "../startups/ownership.service";
 
 export class ApplicationsService {
@@ -47,17 +48,17 @@ export class ApplicationsService {
   }
 
   async getApplications(query: any) {
-    const { status, page = 1, limit = 10 } = query;
-    const skip = (Number(page) - 1) * Number(limit);
-    
-    const where = status ? { status: status as ApplicationStatus } : {};
+    const { page, limit, skip } = pageParams(query);
+    const status = enumParam(query.status, ApplicationStatus, "status");
+
+    const where = status ? { status } : {};
 
     const [data, total] = await Promise.all([
-      prisma.application.findMany({ where, skip, take: Number(limit), orderBy: { createdAt: "desc" } }),
+      prisma.application.findMany({ where, skip, take: limit, orderBy: { createdAt: "desc" } }),
       prisma.application.count({ where })
     ]);
 
-    return { data, meta: { total, page: Number(page), limit: Number(limit) } };
+    return { data, meta: { total, page, limit } };
   }
 
   async getApplication(id: string, userId: string, role: string) {
