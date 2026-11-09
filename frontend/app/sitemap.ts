@@ -38,7 +38,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       next: { revalidate: 3600 },
     });
     const startupsData = await startupsRes.json();
-    const startups = startupsData.data?.startups || [];
+    // The list endpoint returns the startups as `data` itself; reading
+    // `data.startups` left every venture page out of the sitemap.
+    const startups = Array.isArray(startupsData.data) ? startupsData.data : [];
     startupUrls = startups.map((s: any) => ({
       url: `${BASE_URL}/ecosystem/${s.id}`,
       lastModified: new Date(s.updatedAt || s.createdAt),

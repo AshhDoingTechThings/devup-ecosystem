@@ -28,7 +28,8 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
   const title = `${startup.name} — Venture of DevUp Ecosystem`;
   const description = `${startup.name} is a ${startup.domain || "Tech"} venture of the DevUp Ecosystem, focusing on ${startup.tagline || "innovation"}. Explore how we're building innovation together.`;
-  const path = `/ecosystem/${id}`;
+  // One canonical address per startup: the page also answers to its slug.
+  const path = `/ecosystem/${startup.id}`;
 
   return {
     title,
