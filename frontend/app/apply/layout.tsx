@@ -7,7 +7,9 @@ const description =
   "Apply to DevUp Ecosystem Cohort 4 — a 12-week accelerator for student founders in India. Get up to ₹50 Lakhs funding, mentorship, and $100k+ in partner credits.";
 
 export const metadata: Metadata = {
-  title,
+  // buildTitle() already ends in "| DevUp Ecosystem"; absolute keeps the root
+  // template from appending it a second time.
+  title: { absolute: title },
   description,
   alternates: {
     canonical: canonicalUrl("/apply"),

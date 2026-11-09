@@ -8,7 +8,9 @@ const description =
   "Explore the ventures and startups built within the DevUp Ecosystem: Zappy, Yarnia, Kroshay, Elnora, PortalX, StartupsIndia, CineShot AI, CourtAI, and more.";
 
 export const metadata: Metadata = {
-  title,
+  // buildTitle() already ends in "| DevUp Ecosystem"; absolute keeps the root
+  // template from appending it a second time.
+  title: { absolute: title },
   description,
   alternates: {
     canonical: canonicalUrl("/ecosystem"),

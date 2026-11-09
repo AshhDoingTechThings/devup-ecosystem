@@ -7,7 +7,9 @@ const description =
   "Find the perfect technical or business co-founder for your startup within the DevUp Ecosystem. Connect, build, and grow together.";
 
 export const metadata: Metadata = {
-  title,
+  // buildTitle() already ends in "| DevUp Ecosystem"; absolute keeps the root
+  // template from appending it a second time.
+  title: { absolute: title },
   description,
   openGraph: buildOgMetadata({
     title,

@@ -7,7 +7,9 @@ const description =
   "Partner with DevUp Ecosystem for tech, AI, design, marketing, legal, and strategy services. We help student startups build, launch, and scale with expert support.";
 
 export const metadata: Metadata = {
-  title,
+  // buildTitle() already ends in "| DevUp Ecosystem"; absolute keeps the root
+  // template from appending it a second time.
+  title: { absolute: title },
   description,
   alternates: {
     canonical: canonicalUrl("/build-with-devup"),
