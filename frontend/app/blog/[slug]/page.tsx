@@ -86,7 +86,7 @@ export default async function BlogPostPage({ params }: Params) {
       logo: { "@type": "ImageObject", url: seoConfig.organization.logo },
     },
     mainEntityOfPage: { "@type": "WebPage", "@id": url },
-    image: [`${seoConfig.baseUrl}${seoConfig.defaultOgImage}`],
+    image: [new URL(seoConfig.defaultOgImage, seoConfig.baseUrl).toString()],
     keywords: post.keywords.join(", "),
     articleSection: post.category,
     inLanguage: "en-IN",

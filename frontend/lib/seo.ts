@@ -3,12 +3,16 @@
  * All routes should import from here to ensure consistency.
  */
 
+import { getMediaUrl } from "./mediaMap";
+
 export const seoConfig = {
   siteName: "DevUp Ecosystem",
   siteDescription:
     "India's student-driven innovation & startup ecosystem — hackathons, co-founder matching, careers, and ventures including Zappy, Yarnia, PortalX, and more.",
   baseUrl: "https://www.devupecosystem.com",
-  defaultOgImage: "/video/hero-space-poster.jpg",
+  // Hosted in Supabase storage since the large media left the repo; the old
+  // local path 404s, which left every share preview without an image.
+  defaultOgImage: getMediaUrl("video/hero-space-poster.jpg"),
   defaultOgImageAlt: "DevUp Ecosystem — India's Student-Driven Innovation & Startup Ecosystem",
   locale: "en_IN",
   twitterHandle: "@devupeco",

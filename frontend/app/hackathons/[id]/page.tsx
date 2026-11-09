@@ -35,6 +35,7 @@ import HackathonFAQ from "@/components/seo/HackathonFAQ";
 import StatusModal from "./StatusModal";
 import { leadFetch, storeLeadToken, captureLeadTokenFromUrl } from "@/lib/hackathonLead";
 import { ALL_DOMAINS } from "../../../data/domains";
+import { getMediaUrl } from "@/lib/mediaMap";
 
 // Pretty-print the uppercase Prisma enum mode (ONLINE -> Online)
 const prettyMode = (mode?: string) =>
@@ -1051,7 +1052,7 @@ export default function HackathonDetailPage() {
         preload="none"
         className="fixed inset-0 w-full h-full object-cover z-0 opacity-25 pointer-events-none"
       >
-        <source src="/videos/interstellar-bg.mp4" type="video/mp4" />
+        <source src={getMediaUrl("videos/interstellar-bg.mp4")} type="video/mp4" />
       </video>
       <div className="relative z-10">
         {/* Back nav */}
