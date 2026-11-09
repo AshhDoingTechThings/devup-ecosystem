@@ -145,7 +145,7 @@ function LoginContent() {
         <form onSubmit={handleSubmit}>
           {/* Email */}
           <div style={{ marginBottom: 16 }}>
-            <label style={{
+            <label htmlFor="login-email" style={{
               fontFamily: 'Inter', fontSize: 12,
               color: '#6b6b6b', marginBottom: 6,
               display: 'block',
@@ -153,6 +153,8 @@ function LoginContent() {
               Email address
             </label>
             <input
+              id="login-email"
+              autoComplete="email"
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
@@ -172,7 +174,7 @@ function LoginContent() {
 
           {/* Password */}
           <div style={{ marginBottom: 24, position: 'relative' }}>
-            <label style={{
+            <label htmlFor="login-password" style={{
               fontFamily: 'Inter', fontSize: 12,
               color: '#6b6b6b', marginBottom: 6,
               display: 'block',
@@ -181,6 +183,8 @@ function LoginContent() {
             </label>
             <div style={{ position: 'relative' }}>
               <input
+                id="login-password"
+                autoComplete="current-password"
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
@@ -199,6 +203,8 @@ function LoginContent() {
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                aria-pressed={showPassword}
                 style={{
                   position: 'absolute', right: 14,
                   top: '50%', transform: 'translateY(-50%)',

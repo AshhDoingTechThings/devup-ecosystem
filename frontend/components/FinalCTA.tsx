@@ -41,6 +41,8 @@ export default function FinalCTA() {
         {/* Input stacked above button */}
         <input
           type="email"
+          aria-label="Email address"
+          autoComplete="email"
           placeholder="your@email.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
@@ -144,6 +146,8 @@ export default function FinalCTA() {
                 >
                   <input
                     type="email"
+                    aria-label="Email address"
+                    autoComplete="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="your@email.com"

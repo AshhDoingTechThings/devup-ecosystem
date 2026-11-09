@@ -238,8 +238,8 @@ export default function SignupPage() {
           {step === 1 && (
             <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
               <div style={{ marginBottom: 16 }}>
-                <label style={labelStyle}>Full name</label>
-                <input
+                <label htmlFor="signup-full-name" style={labelStyle}>Full name</label>
+                <input id="signup-full-name"
                   type="text"
                   value={formData.name}
                   onChange={e => setFormData({...formData, name: e.target.value})}
@@ -248,8 +248,8 @@ export default function SignupPage() {
                 />
               </div>
               <div style={{ marginBottom: 16 }}>
-                <label style={labelStyle}>Email address</label>
-                <input
+                <label htmlFor="signup-email-address" style={labelStyle}>Email address</label>
+                <input id="signup-email-address"
                   type="email"
                   value={formData.email}
                   onChange={e => setFormData({...formData, email: e.target.value})}
@@ -258,9 +258,9 @@ export default function SignupPage() {
                 />
               </div>
               <div style={{ marginBottom: 16, position: 'relative' }}>
-                <label style={labelStyle}>Password</label>
+                <label htmlFor="signup-password" style={labelStyle}>Password</label>
                 <div style={{ position: 'relative' }}>
-                  <input
+                  <input id="signup-password" autoComplete="new-password"
                     type={showPassword ? 'text' : 'password'}
                     value={formData.password}
                     onChange={e => setFormData({...formData, password: e.target.value})}
@@ -270,6 +270,8 @@ export default function SignupPage() {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    aria-pressed={showPassword}
                     style={{
                       position: 'absolute', right: 14,
                       top: '50%', transform: 'translateY(-50%)',
@@ -283,8 +285,8 @@ export default function SignupPage() {
                 </div>
               </div>
               <div style={{ marginBottom: 24, position: 'relative' }}>
-                <label style={labelStyle}>Confirm Password</label>
-                <input
+                <label htmlFor="signup-confirm-password" style={labelStyle}>Confirm Password</label>
+                <input id="signup-confirm-password"
                   type={showPassword ? 'text' : 'password'}
                   value={formData.confirmPassword}
                   onChange={e => setFormData({...formData, confirmPassword: e.target.value})}
@@ -340,12 +342,12 @@ export default function SignupPage() {
               {formData.role === 'FOUNDER' && (
                 <>
                   <div style={{ marginBottom: 16 }}>
-                    <label style={labelStyle}>Startup Name (Optional)</label>
-                    <input type="text" value={formData.startupName} onChange={e => setFormData({...formData, startupName: e.target.value})} style={inputStyle} />
+                    <label htmlFor="signup-startup-name-optional" style={labelStyle}>Startup Name (Optional)</label>
+                    <input id="signup-startup-name-optional" type="text" value={formData.startupName} onChange={e => setFormData({...formData, startupName: e.target.value})} style={inputStyle} />
                   </div>
                   <div style={{ marginBottom: 24 }}>
-                    <label style={labelStyle}>City</label>
-                    <input type="text" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} style={inputStyle} placeholder="e.g. San Francisco, CA" />
+                    <label htmlFor="signup-city" style={labelStyle}>City</label>
+                    <input id="signup-city" type="text" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} style={inputStyle} placeholder="e.g. San Francisco, CA" />
                   </div>
                 </>
               )}
@@ -353,16 +355,16 @@ export default function SignupPage() {
               {formData.role === 'STUDENT' && (
                 <>
                   <div style={{ marginBottom: 16 }}>
-                    <label style={labelStyle}>College / University</label>
-                    <input type="text" value={formData.college} onChange={e => setFormData({...formData, college: e.target.value})} style={inputStyle} />
+                    <label htmlFor="signup-college-university" style={labelStyle}>College / University</label>
+                    <input id="signup-college-university" type="text" value={formData.college} onChange={e => setFormData({...formData, college: e.target.value})} style={inputStyle} />
                   </div>
                   <div style={{ marginBottom: 16 }}>
-                    <label style={labelStyle}>City</label>
-                    <input type="text" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} style={inputStyle} />
+                    <label htmlFor="signup-city-2" style={labelStyle}>City</label>
+                    <input id="signup-city-2" type="text" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} style={inputStyle} />
                   </div>
                   <div style={{ marginBottom: 24 }}>
-                    <label style={labelStyle}>Top Skills (comma separated)</label>
-                    <input type="text" value={formData.skills} onChange={e => setFormData({...formData, skills: e.target.value})} style={inputStyle} placeholder="e.g. React, Node.js, Design" />
+                    <label htmlFor="signup-top-skills-comma-separated" style={labelStyle}>Top Skills (comma separated)</label>
+                    <input id="signup-top-skills-comma-separated" type="text" value={formData.skills} onChange={e => setFormData({...formData, skills: e.target.value})} style={inputStyle} placeholder="e.g. React, Node.js, Design" />
                   </div>
                 </>
               )}
@@ -370,12 +372,12 @@ export default function SignupPage() {
               {formData.role === 'INVESTOR' && (
                 <>
                   <div style={{ marginBottom: 16 }}>
-                    <label style={labelStyle}>Firm Name (Optional)</label>
-                    <input type="text" value={formData.firm} onChange={e => setFormData({...formData, firm: e.target.value})} style={inputStyle} />
+                    <label htmlFor="signup-firm-name-optional" style={labelStyle}>Firm Name (Optional)</label>
+                    <input id="signup-firm-name-optional" type="text" value={formData.firm} onChange={e => setFormData({...formData, firm: e.target.value})} style={inputStyle} />
                   </div>
                   <div style={{ marginBottom: 24 }}>
-                    <label style={labelStyle}>City</label>
-                    <input type="text" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} style={inputStyle} />
+                    <label htmlFor="signup-city-3" style={labelStyle}>City</label>
+                    <input id="signup-city-3" type="text" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} style={inputStyle} />
                   </div>
                 </>
               )}
