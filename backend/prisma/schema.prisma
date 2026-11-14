@@ -56,16 +56,18 @@ model User {
   receivedMessages    Message[]               @relation("ReceivedMessages")
   startupMemberships  StartupMember[]
 
-  hiringManagerJobs  Job[]                   @relation("JobHiringManager")
-  stageEvents        ApplicationStageEvent[] @relation("StageEventActor")
-  employeeRecords    Employee[]              @relation("EmployeeUser")
-  internRecords      Intern[]                @relation("InternUser")
-  interviewPanels    InterviewPanelist[]
-  interviewFeedbacks InterviewFeedback[]     @relation("FeedbackReviewer")
-  pushSubscriptions  PushSubscription[]
-  perkAwards         PerkAward[]
-  partnerAccounts    PartnerUser[]
-  emailVerifications EmailVerification[]
+  hiringManagerJobs    Job[]                   @relation("JobHiringManager")
+  stageEvents          ApplicationStageEvent[] @relation("StageEventActor")
+  employeeRecords      Employee[]              @relation("EmployeeUser")
+  internRecords        Intern[]                @relation("InternUser")
+  interviewPanels      InterviewPanelist[]
+  interviewFeedbacks   InterviewFeedback[]     @relation("FeedbackReviewer")
+  pushSubscriptions    PushSubscription[]
+  perkAwards           PerkAward[]
+  partnerAccounts      PartnerUser[]
+  emailVerifications   EmailVerification[]
+  joinRequests         StartupJoinRequest[]    @relation("JoinRequestUser")
+  reviewedJoinRequests StartupJoinRequest[]    @relation("JoinRequestReviewer")
 }
 
 /// Single-use, expiring proof-of-inbox tokens. Only the SHA-256 of the token is
@@ -213,6 +215,7 @@ model Startup {
 
   aiResearchLogs AiResearchLog[]
   members        StartupMember[]
+  joinRequests   StartupJoinRequest[]
 
   // Short immutable tenant code used in every generated number (e.g. "ZAP").
   // Nullable only for backfill of pre-existing rows; treated as required in app logic.
@@ -247,26 +250,30 @@ enum StartupMemberRole {
 enum StartupMemberStatus {
   ACTIVE
   INVITED
+  /// Access withdrawn by a startup admin. Kept (not deleted) so it can be
+  /// reactivated and so the history stays readable.
+  DEACTIVATED
 }
 
 model StartupMember {
-  id          String              @id @default(cuid())
-  startupId   String
-  startup     Startup             @relation(fields: [startupId], references: [id], onDelete: Cascade)
-  userId      String?
-  user        User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  email       String
-  role        StartupMemberRole   @default(MEMBER)
+  id            String              @id @default(cuid())
+  startupId     String
+  startup       Startup             @relation(fields: [startupId], references: [id], onDelete: Cascade)
+  userId        String?
+  user          User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email         String
+  role          StartupMemberRole   @default(MEMBER)
   /// The title this person actually holds, printed on their appointment
   /// letter. `role` governs permissions and is a fixed set; this is what they
   /// are called — a COO and a CSO both need FOUNDER-level access.
-  title       String?
-  status      StartupMemberStatus @default(INVITED)
-  invitedBy   String
-  inviteToken String              @unique
-  invitedAt   DateTime            @default(now())
-  joinedAt    DateTime?
-  createdAt   DateTime            @default(now())
+  title         String?
+  status        StartupMemberStatus @default(INVITED)
+  invitedBy     String
+  inviteToken   String              @unique
+  invitedAt     DateTime            @default(now())
+  joinedAt      DateTime?
+  deactivatedAt DateTime?
+  createdAt     DateTime            @default(now())
 
   documents HrDocument[]
 
@@ -975,6 +982,8 @@ model AuditLog {
   metadata Json?
 
   createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1615,6 +1624,7 @@ model Employee {
   attendance     Attendance[]
   reviews        PerformanceReview[]
   onboardingDocs OnboardingDocument[]
+  joinRequests   StartupJoinRequest[]
 
   @@unique([startupId, email])
   @@index([startupId, status])
@@ -1659,6 +1669,7 @@ model Intern {
   payouts        StipendPayout[]
   workLogs       WorkLog[]
   daySummaries   DaySummary[]
+  joinRequests   StartupJoinRequest[]
 
   @@unique([startupId, email])
   @@index([startupId, status])
@@ -1696,14 +1707,19 @@ model HrDocument {
   applicationId String?
   templateKey   String
   payload       Json
+  /// Legacy public URL. New files go to private storage (storagePath) and
+  /// this stays null; links are signed per request after an access check.
   pdfUrl        String?
+  /// Object path in the private HR-documents bucket.
+  storagePath   String?
   issuedAt      DateTime       @default(now())
   issuedBy      String
   revokedAt     DateTime?
   revokeReason  String?
   supersedesId  String?
 
-  offer OfferLetter?
+  offer        OfferLetter?
+  joinRequests StartupJoinRequest[]
 
   @@index([startupId, docType, issuedAt])
 }
@@ -2285,4 +2301,96 @@ model PartnerUser {
 
   @@unique([partnerId, userId])
   @@index([userId])
+}
+
+// ── Startup affiliation (employee / intern join requests) ─────────────────
+
+enum AffiliationKind {
+  EMPLOYEE
+  INTERN
+}
+
+enum LetterDeliveryStatus {
+  /// Being generated or emailed right now.
+  SENDING
+  /// Accepted by the mail provider (or the mail queue) with the PDF attached.
+  SENT
+  /// Could not be issued, rendered or emailed; see offerError. Retryable.
+  FAILED
+}
+
+enum JoinRequestStatus {
+  PENDING
+  /// The startup asked for more information; the requester edits and resubmits.
+  NEEDS_INFO
+  APPROVED
+  REJECTED
+  /// Withdrawn by the requester before a decision.
+  CANCELLED
+}
+
+/// Someone saying "I work at this startup" and asking for access to it.
+///
+/// A request never grants anything by itself: access exists only once a
+/// startup admin approves it, which creates (or reuses) the Employee/Intern
+/// record and activates the StartupMember seat in one transaction.
+///
+/// One row per person per startup. A new request after a rejection or
+/// cancellation reuses the row; every earlier decision stays in AuditLog
+/// (entity "StartupJoinRequest"), so nothing is lost and duplicates are
+/// impossible at the database level.
+model StartupJoinRequest {
+  id        String            @id @default(uuid())
+  startupId String
+  startup   Startup           @relation(fields: [startupId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User              @relation("JoinRequestUser", fields: [userId], references: [id], onDelete: Cascade)
+  kind      AffiliationKind
+  status    JoinRequestStatus @default(PENDING)
+
+  /// What they told us. The email is always the account's own verified
+  /// address, never taken from the request body.
+  fullName    String
+  email       String
+  phone       String?
+  department  String?
+  designation String?
+  college     String?
+  joiningDate DateTime?
+  endDate     DateTime?
+  note        String?
+
+  /// Rejection reason, or what the startup asked for when status is NEEDS_INFO.
+  reviewNote   String?
+  reviewedById String?
+  reviewedBy   User?     @relation("JoinRequestReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+
+  /// The HR record created or linked on approval.
+  employeeId String?
+  employee   Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  internId   String?
+  intern     Intern?   @relation(fields: [internId], references: [id], onDelete: SetNull)
+
+  /// The offer letter issued on approval (interns by default). Linked once
+  /// issued, so a retry re-sends this same letter and number, never a new one.
+  offerDocumentId String?
+  offerDocument   HrDocument?           @relation(fields: [offerDocumentId], references: [id], onDelete: SetNull)
+  /// null = no letter requested. Persisted so admins can tell a delivered
+  /// letter from a failed one, and retry only the failed ones.
+  offerStatus     LetterDeliveryStatus?
+  /// Machine-readable reason for the last failure (no personal data).
+  offerError      String?
+  offerAttempts   Int                   @default(0)
+  offerSentAt     DateTime?
+  /// Terms the admin approved for the letter (work mode, location), kept so
+  /// a retry issues exactly what was approved. Stipend/CTC live on the record.
+  offerTerms      Json?
+
+  submittedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, startupId])
+  @@index([startupId, status])
 }

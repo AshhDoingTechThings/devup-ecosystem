@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../../middleware/auth";
-import { resolveTenant, requireTenantRank } from "../../middleware/tenant";
+import { resolveTenant, requireTenantRank, rank } from "../../middleware/tenant";
 import { validate } from "../../middleware/validate";
 import { ApplicationsController } from "./applications/applications.controller";
 import { transitionSchema, rejectSchema } from "./applications/applications.schema";
@@ -20,11 +20,15 @@ import * as analytics from "../analytics/analytics.service";
 import * as onboarding from "../hrms/onboarding/onboarding.service";
 import { createDirectHire, bulkDirectHire } from "../hrms/onboarding/directHire.service";
 import * as people from "../hrms/people/people.service";
+import * as affiliation from "../affiliations/affiliation.service";
+import * as offerLetters from "../affiliations/offerLetter.service";
+import { approveBody, reasonBody } from "../affiliations/affiliation.routes";
 import { audit, AuditAction } from "../shared/audit.service";
 import multer from "multer";
 import { env } from "../../config/env";
 import { AppError } from "../../middleware/errorHandler";
 import { prisma } from "../../lib/prisma";
+import { withFileLink, fileLink, LINK_TTL_SECONDS } from "../hrms/documents/documentFiles";
 
 /** Identity and education documents joiners upload — images or PDFs. */
 const upload = multer({
@@ -421,8 +425,130 @@ router.post(
 );
 
 // ── People: full record, edit, remove ────────────────
+// ── Employee & intern requests (affiliation) ─────────────
+// Reviewing who joins is an HR decision; withdrawing access is an ADMIN one,
+// matching who may delete a person. Everything is scoped to req.startupId, so
+// an id from another startup is simply "not found".
+const requestId = z.object({ code: z.string(), id: z.string().uuid("Unknown request") });
+const personId = z.object({ code: z.string(), personId: z.string().uuid("Unknown person") });
+
+router.get("/:code/join-requests", requireTenantRank("HR"), async (req, res) => {
+  ok(res, await affiliation.listRequests(req.startupId!, req.query.status as string | undefined));
+});
+router.get(
+  "/:code/join-requests/:id",
+  requireTenantRank("HR"),
+  validate(z.object({ params: requestId })),
+  async (req, res) => {
+    ok(res, await affiliation.getRequest(req.startupId!, req.params.id as string));
+  }
+);
+router.post(
+  "/:code/join-requests/:id/approve",
+  requireTenantRank("HR"),
+  validate(z.object({ params: requestId, body: approveBody })),
+  async (req, res) => {
+    ok(
+      res,
+      await affiliation.approveRequest({
+        ...req.body,
+        startupId: req.startupId!,
+        startupCode: req.startup?.code ?? "GEN",
+        requestId: req.params.id as string,
+        actorId: req.user!.id,
+      })
+    );
+  }
+);
+router.post(
+  "/:code/join-requests/:id/reject",
+  requireTenantRank("HR"),
+  validate(z.object({ params: requestId, body: reasonBody("reason", "Give a reason") })),
+  async (req, res) => {
+    ok(
+      res,
+      await affiliation.rejectRequest({
+        startupId: req.startupId!,
+        requestId: req.params.id as string,
+        actorId: req.user!.id,
+        reason: req.body.reason,
+      })
+    );
+  }
+);
+router.post(
+  "/:code/join-requests/:id/request-info",
+  requireTenantRank("HR"),
+  validate(z.object({ params: requestId, body: reasonBody("message", "Say what you need") })),
+  async (req, res) => {
+    ok(
+      res,
+      await affiliation.requestMoreInfo({
+        startupId: req.startupId!,
+        requestId: req.params.id as string,
+        actorId: req.user!.id,
+        message: req.body.message,
+      })
+    );
+  }
+);
+// Send, or re-send after a failure, the offer letter for an approved request.
+// Re-sends the same document and number; refuses once a letter was delivered.
+router.post(
+  "/:code/join-requests/:id/offer",
+  requireTenantRank("HR"),
+  validate(z.object({ params: requestId })),
+  async (req, res) => {
+    const result = await offerLetters.retryOfferLetter({
+      startupId: req.startupId!,
+      requestId: req.params.id as string,
+      actorId: req.user!.id,
+    });
+    ok(res, { ...result, message: offerLetters.offerReasonText(result.error) });
+  }
+);
+router.get("/:code/team/affiliates", requireTenantRank("HR"), async (req, res) => {
+  ok(res, await affiliation.listAffiliates(req.startupId!));
+});
+router.post(
+  "/:code/team/:personId/deactivate",
+  requireTenantRank("ADMIN"),
+  validate(z.object({ params: personId, body: z.object({ reason: z.string().trim().max(1000).optional() }) })),
+  async (req, res) => {
+    ok(
+      res,
+      await affiliation.deactivatePerson({
+        startupId: req.startupId!,
+        personId: req.params.personId as string,
+        actorId: req.user!.id,
+        reason: req.body.reason,
+      })
+    );
+  }
+);
+router.post(
+  "/:code/team/:personId/reactivate",
+  requireTenantRank("ADMIN"),
+  validate(z.object({ params: personId })),
+  async (req, res) => {
+    ok(
+      res,
+      await affiliation.reactivatePerson({
+        startupId: req.startupId!,
+        personId: req.params.personId as string,
+        actorId: req.user!.id,
+      })
+    );
+  }
+);
+
 router.get("/:code/team/:personId", requireTenantRank("MANAGER"), async (req, res) => {
-  ok(res, await people.getPerson(req.startupId!, req.params.personId as string));
+  ok(
+    res,
+    await people.getPerson(req.startupId!, req.params.personId as string, {
+      canSeeFiles: rank(req.tenantRole!) <= rank("HR"),
+    })
+  );
 });
 
 router.patch("/:code/team/:personId", requireTenantRank("HR"), async (req, res) => {
@@ -558,7 +684,7 @@ router.get("/:code/founders", requireTenantRank("FOUNDER"), async (req, res) => 
       user: { select: { profile: { select: { name: true } } } },
       documents: {
         where: { docType: "FOUNDER_LETTER", revokedAt: null },
-        select: { id: true, documentNo: true, pdfUrl: true, issuedAt: true },
+        select: { id: true, documentNo: true, pdfUrl: true, storagePath: true, issuedAt: true },
         take: 1,
       },
     },
@@ -567,15 +693,15 @@ router.get("/:code/founders", requireTenantRank("FOUNDER"), async (req, res) => 
 
   ok(
     res,
-    members.map((m) => ({
+    await Promise.all(members.map(async (m) => ({
       id: m.id,
       email: m.email,
       name: m.user?.profile?.name ?? null,
       role: m.role,
       status: m.status,
       joinedAt: m.joinedAt,
-      letter: m.documents[0] ?? null,
-    }))
+      letter: m.documents[0] ? await withFileLink(m.documents[0]) : null,
+    })))
   );
 });
 
@@ -604,6 +730,18 @@ router.post("/:code/founders/letters", requireTenantRank("FOUNDER"), async (req,
       actorId: req.user!.id,
     })
   );
+});
+
+/** A fresh short-lived link to one of this workspace's issued documents (HR+). */
+router.get("/:code/documents/:id/file", requireTenantRank("HR"), async (req, res) => {
+  const doc = await prisma.hrDocument.findFirst({
+    where: { id: req.params.id as string, startupId: req.startupId! },
+    select: { pdfUrl: true, storagePath: true },
+  });
+  if (!doc) throw new AppError(404, "Document not found", "NOT_FOUND");
+  const url = await fileLink(doc);
+  if (!url) throw new AppError(404, "This document has no file yet", "NO_FILE");
+  ok(res, { url, expiresIn: LINK_TTL_SECONDS });
 });
 
 /**

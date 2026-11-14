@@ -2,6 +2,7 @@ import { prisma } from "../../../lib/prisma";
 import { AppError } from "../../../middleware/errorHandler";
 import { audit } from "../../shared/audit.service";
 import { getChecklist } from "../onboarding/onboarding.service";
+import { fileLink } from "../documents/documentFiles";
 
 /**
  * Everything about one person in a startup: their record, their onboarding
@@ -42,10 +43,19 @@ async function resolve(startupId: string, personId: string) {
   throw new AppError(404, "Person not found in this startup", "NOT_FOUND");
 }
 
-export async function getPerson(startupId: string, personId: string) {
+/**
+ * `canSeeFiles`: links to uploaded ID scans and issued letters are HR+ only,
+ * matching the onboarding and document routes. Managers see the person and
+ * document statuses, but no file links.
+ */
+export async function getPerson(startupId: string, personId: string, opts: { canSeeFiles?: boolean } = {}) {
+  const canSeeFiles = opts.canSeeFiles ?? true;
   const { kind, employee, intern } = await resolve(startupId, personId);
   const p: any = employee ?? intern;
-  const checklist = await getChecklist(startupId, personId);
+  const fullChecklist = await getChecklist(startupId, personId);
+  const checklist = canSeeFiles
+    ? fullChecklist
+    : { ...fullChecklist, items: fullChecklist.items.map((i: any) => ({ ...i, fileUrl: null })) };
 
   const offer = p.application
     ? await prisma.offerLetter.findUnique({
@@ -96,14 +106,16 @@ export async function getPerson(startupId: string, personId: string) {
     onboarding: checklist,
 
     /** Papers the company issued them. */
-    issuedDocuments: p.documents.map((d: any) => ({
-      id: d.id,
-      documentNo: d.documentNo,
-      docType: d.docType,
-      pdfUrl: d.pdfUrl,
-      issuedAt: d.issuedAt,
-      revokedAt: d.revokedAt,
-    })),
+    issuedDocuments: await Promise.all(
+      p.documents.map(async (d: any) => ({
+        id: d.id,
+        documentNo: d.documentNo,
+        docType: d.docType,
+        pdfUrl: canSeeFiles ? await fileLink(d) : null,
+        issuedAt: d.issuedAt,
+        revokedAt: d.revokedAt,
+      }))
+    ),
   };
 }
 

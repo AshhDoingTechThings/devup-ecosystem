@@ -314,12 +314,17 @@ if (!DB) {
       const svg = await send("POST", url, file("file", SVG, "pan.svg", "image/svg+xml", { docType: "PAN" }), auth(student));
       assert.equal(svg.status, 400);
       assert.equal(svg.wrote.length, 0);
-      const ok = await send("POST", url, file("file", PDF, "pan card.pdf", "application/pdf", { docType: "PAN" }), auth(student));
+      // PAN is on the employee checklist, not the intern one: refused, nothing stored.
+      const notAsked = await send("POST", url, file("file", PDF, "pan card.pdf", "application/pdf", { docType: "PAN" }), auth(student));
+      assert.equal(notAsked.status, 400);
+      assert.equal(notAsked.body.code, "DOC_TYPE_NOT_REQUIRED");
+      assert.equal(notAsked.wrote.length, 0);
+      const ok = await send("POST", url, file("file", PDF, "college id.pdf", "application/pdf", { docType: "COLLEGE_ID" }), auth(student));
       assert.equal(ok.status, 201, JSON.stringify(ok.body));
       assert.equal(ok.wrote[0].bucket, env.STORAGE_BUCKET_IDENTITY);
-      assert.match(ok.wrote[0].path, new RegExp(`^onboarding/${startupId}/${intern.id}/PAN-\\d+-[0-9a-f]{12}\\.pdf$`));
+      assert.match(ok.wrote[0].path, new RegExp(`^onboarding/${startupId}/${intern.id}/COLLEGE_ID-\\d+-[0-9a-f]{12}\\.pdf$`));
       const doc = await h.prisma.onboardingDocument.findFirst({ where: { internId: intern.id } });
-      assert.equal(doc.fileName, "pan card.pdf");
+      assert.equal(doc.fileName, "college id.pdf");
       assert.equal(doc.mimeType, "application/pdf");
       const hindi = await send("POST", url, file("file", PDF, "पैन कार्ड.pdf", "application/pdf", { docType: "AADHAAR" }), auth(student));
       assert.equal(hindi.status, 201);

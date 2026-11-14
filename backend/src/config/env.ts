@@ -69,6 +69,13 @@ const envSchema = z.object({
    * because generated letters are meant to be shared, and a PAN card is not.
    */
   STORAGE_BUCKET_IDENTITY: z.string().default("identity-documents"),
+  /**
+   * Issued HR documents (offer letters, experience letters, certificates, ID
+   * cards). Private: they carry names, pay and addresses, so they are served
+   * only through short-lived signed links after an access check. Defaults to
+   * the identity bucket, which is already private.
+   */
+  STORAGE_BUCKET_HR_DOCUMENTS: z.string().default("identity-documents"),
 
   /**
    * Key for encrypting client credentials at rest. 32 bytes, hex or base64.

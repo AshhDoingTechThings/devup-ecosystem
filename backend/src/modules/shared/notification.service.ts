@@ -43,7 +43,14 @@ interface NotifyArgs {
  * blocks a request; when Redis is disabled it falls back to a direct send.
  * A failed email must never fail the business transaction that triggered it.
  */
-export async function notify(args: NotifyArgs) {
+/**
+ * What happened to the email part. The in-app notification is best-effort and
+ * not reported. Callers that must know whether mail went out (offer letters)
+ * read this; everyone else can ignore it.
+ */
+export type EmailOutcome = { email: "sent" | "queued" | "failed" | "skipped"; error?: string };
+
+export async function notify(args: NotifyArgs): Promise<EmailOutcome> {
   const { userId, email, event, title, message, link, html, attachments, channel } = args;
 
   if (userId) {
@@ -63,10 +70,10 @@ export async function notify(args: NotifyArgs) {
     );
   }
 
-  if (channel === "inapp") return;
+  if (channel === "inapp") return { email: "skipped" };
 
   const to = email ?? (userId ? (await prisma.user.findUnique({ where: { id: userId } }))?.email : undefined);
-  if (!to) return;
+  if (!to) return { email: "skipped", error: "NO_RECIPIENT" };
 
   const payload = {
     from: MAIL_FROM,
@@ -87,6 +94,7 @@ export async function notify(args: NotifyArgs) {
         backoff: { type: "exponential", delay: 5000 },
         removeOnComplete: 100,
       });
+      return { email: "queued" };
     } else {
       /*
        * Resend does not throw when it refuses a message — it RETURNS
@@ -96,13 +104,18 @@ export async function notify(args: NotifyArgs) {
        */
       const result: any = await resend.emails.send(payload);
       if (result?.error) {
+        // No address in the log line: the event and the provider's reason are
+        // enough to diagnose, and logs travel further than the database.
         logger.error(
-          `notification.email rejected for ${to} (${event}): ${result.error.name ?? ""} ${result.error.message ?? JSON.stringify(result.error)}`
+          `notification.email rejected (${event}): ${result.error.name ?? ""} ${result.error.message ?? JSON.stringify(result.error)}`
         );
+        return { email: "failed", error: String(result.error.name ?? "PROVIDER_REJECTED").slice(0, 60) };
       }
+      return { email: "sent" };
     }
   } catch (err) {
-    logger.error(`notification.email failed for ${to}: ${(err as Error).message}`);
+    logger.error(`notification.email failed (${event}): ${(err as Error).message}`);
+    return { email: "failed", error: "SEND_ERROR" };
   }
 }
 

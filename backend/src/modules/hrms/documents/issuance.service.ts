@@ -99,7 +99,9 @@ export async function issueDocument(req: IssueRequest) {
     });
   }
 
-  return doc;
+  // The record and a fresh link — never the rendered bytes or the storage path.
+  const { pdfBuffer: _bytes, storagePath: _path, html: _html, ...out } = doc as typeof doc & { html?: string };
+  return out;
 }
 
 /**

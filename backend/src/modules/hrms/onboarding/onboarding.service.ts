@@ -1,7 +1,8 @@
 import { OnboardingDocType, Prisma } from "@prisma/client";
 import { prisma } from "../../../lib/prisma";
 import { AppError } from "../../../middleware/errorHandler";
-import { uploadPrivateFile, signedUrl } from "../../../lib/storage";
+import { uploadPrivateFile, signedUrl, deleteFile } from "../../../lib/storage";
+import { logger } from "../../../middleware/logger";
 import { objectKey, verifyUpload } from "../../../lib/uploads";
 import { env } from "../../../config/env";
 import { audit } from "../../shared/audit.service";
@@ -179,6 +180,24 @@ export async function uploadDocument(args: {
 
   const requirements = await getRequirements(args.startupId, kind);
   const requirement = requirements.find((r) => r.docType === args.docType);
+  // Only what this startup asks this kind of person for. An intern cannot
+  // file a "relieving letter", and nobody can add types the startup never set.
+  if (!requirement) {
+    throw new AppError(400, "This startup does not ask for that document.", "DOC_TYPE_NOT_REQUIRED");
+  }
+
+  const existing = await prisma.onboardingDocument.findFirst({
+    where: {
+      startupId: args.startupId,
+      docType: args.docType,
+      ...(employee ? { employeeId: employee.id } : { internId: intern!.id }),
+    },
+  });
+  // An approved document is settled. Replacing it would quietly reset a
+  // completed review; HR can reject it if it genuinely needs replacing.
+  if (existing?.status === "APPROVED") {
+    throw new AppError(409, "This document is already approved.", "ALREADY_APPROVED");
+  }
 
   /**
    * Private bucket, and the path is stored rather than a URL.
@@ -188,22 +207,22 @@ export async function uploadDocument(args: {
    * shared — so every scan uploaded here had a permanent address anyone could
    * fetch without logging in. Reviewers now get a signed link that expires.
    */
-  const storagePath = await uploadPrivateFile(
-    env.STORAGE_BUCKET_IDENTITY,
-    objectKey(["onboarding", args.startupId, args.personId], args.docType, file.ext),
-    file.buffer,
-    file.mime
-  );
+  let storagePath: string;
+  try {
+    storagePath = await uploadPrivateFile(
+      env.STORAGE_BUCKET_IDENTITY,
+      objectKey(["onboarding", args.startupId, args.personId], args.docType, file.ext),
+      file.buffer,
+      file.mime
+    );
+  } catch (err) {
+    // The provider's message names buckets and internals; the person needs to know to retry.
+    logger.warn(`onboarding upload: storage write failed (${(err as Error).message.slice(0, 120)})`);
+    throw new AppError(503, "We couldn't store your file just now. Please try again.", "UPLOAD_FAILED");
+  }
 
   // One row per person per document type — re-uploading replaces the previous
   // file and resets the review, which is what a rejected document needs.
-  const existing = await prisma.onboardingDocument.findFirst({
-    where: {
-      startupId: args.startupId,
-      docType: args.docType,
-      ...(employee ? { employeeId: employee.id } : { internId: intern!.id }),
-    },
-  });
 
   const data = {
     startupId: args.startupId,
@@ -224,9 +243,26 @@ export async function uploadDocument(args: {
     reviewedBy: null,
   };
 
-  const saved = existing
-    ? await prisma.onboardingDocument.update({ where: { id: existing.id }, data })
-    : await prisma.onboardingDocument.create({ data });
+  let saved;
+  try {
+    saved = existing
+      ? await prisma.onboardingDocument.update({ where: { id: existing.id }, data })
+      : await prisma.onboardingDocument.create({ data });
+  } catch (err) {
+    // The file is stored but nothing points at it: remove it rather than
+    // leave an identity scan nobody can find or delete.
+    await deleteFile(env.STORAGE_BUCKET_IDENTITY, storagePath).catch(() =>
+      logger.warn("onboarding upload: could not remove an orphaned file after a failed save")
+    );
+    throw err;
+  }
+
+  // The replaced file is no longer referenced by anything.
+  if (existing?.storagePath && existing.storagePath !== storagePath) {
+    await deleteFile(env.STORAGE_BUCKET_IDENTITY, existing.storagePath).catch(() =>
+      logger.warn("onboarding upload: could not remove a replaced file")
+    );
+  }
 
   await audit({
     action: "onboarding.document_uploaded",

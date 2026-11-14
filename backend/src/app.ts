@@ -43,6 +43,7 @@ import leadAppointmentRoutes from "./modules/lead-applications/appointments.rout
 import publicVerifyRoutes from "./modules/lead-applications/verify.routes";
 import { publicKycRouter, adminKycRouter } from "./modules/lead-applications/kyc.routes";
 import { publicCatalogueRouter, adminB2bRouter } from "./modules/b2b/b2b.routes";
+import { meAffiliationRouter, adminAffiliationRouter } from "./modules/affiliations/affiliation.routes";
 
 export const app = express();
 
@@ -226,6 +227,10 @@ app.use("/api/messages", messagesRoutes);
 // `/api/w/:code/*` is the tenant workspace — membership is proven by
 // resolveTenant and every query is hard-scoped to that startup.
 app.use("/api/w", workspaceRoutes);
+// Employee / intern affiliation: asking to join a startup, and the platform
+// overview. Startup admins review requests inside the workspace (/api/w/:code).
+app.use("/api/me/affiliations", meAffiliationRouter);
+app.use("/api/admin/affiliations", adminAffiliationRouter);
 app.use("/api", candidateRoutes);
 app.use("/api/admin/analytics", platformAnalyticsRoutes);
 app.use("/api/admin/founders", founderLetterRoutes);

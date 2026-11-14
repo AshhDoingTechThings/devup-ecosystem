@@ -13,6 +13,8 @@ import * as worklog from "../hrms/attendance/worklog.service";
 import { claimIfEmpty } from "../shared/claim.service";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../middleware/errorHandler";
+import { assertSelfService, PERSON_ACTIVE } from "../affiliations/affiliation.service";
+import { fileLink, LINK_TTL_SECONDS } from "../hrms/documents/documentFiles";
 
 const router = Router();
 const controller = new ApplicationsController();
@@ -150,7 +152,14 @@ router.get("/me/onboarding", requireAuth, async (req, res) => {
     [employees, interns] = await load();
   }
 
-  const all = [...employees, ...interns];
+  // Records whose access was deactivated stay out of the self-service view.
+  const blocked = new Set(
+    (await prisma.startupMember.findMany({
+      where: { userId: req.user!.id, status: "DEACTIVATED", role: { in: ["EMPLOYEE", "INTERN", "MEMBER"] } },
+      select: { startupId: true },
+    })).map((m) => m.startupId)
+  );
+  const all = [...employees, ...interns].filter((p) => !blocked.has(p.startupId));
   const checklists = await Promise.all(
     all.map(async (p) => ({
       startup: p.startup,
@@ -171,12 +180,16 @@ router.post(
 
     // Prove the record belongs to this user before touching it — personId comes
     // from the URL and must never be trusted on its own.
+    // Theirs, current, and not deactivated — an exited or deactivated person
+    // cannot keep adding files to a startup's records.
+    const current = { id: req.params.personId as string, userId: req.user!.id, status: { in: [...PERSON_ACTIVE] } };
     const [employee, intern] = await Promise.all([
-      prisma.employee.findFirst({ where: { id: req.params.personId as string, userId: req.user!.id } }),
-      prisma.intern.findFirst({ where: { id: req.params.personId as string, userId: req.user!.id } }),
+      prisma.employee.findFirst({ where: current }),
+      prisma.intern.findFirst({ where: current }),
     ]);
     const owned = employee ?? intern;
     if (!owned) throw new AppError(404, "Record not found", "NOT_FOUND");
+    await assertSelfService(req.user!.id, owned.startupId);
 
     ok(
       res,
@@ -302,6 +315,7 @@ router.get("/me/documents", requireAuth, async (req, res) => {
       docType: true,
       documentNo: true,
       pdfUrl: true,
+      storagePath: true,
       issuedAt: true,
       payload: true,
       startup: { select: { name: true, code: true, logoUrl: true } },
@@ -311,19 +325,49 @@ router.get("/me/documents", requireAuth, async (req, res) => {
 
   ok(
     res,
-    docs.map((d) => {
+    await Promise.all(docs.map(async (d) => {
       const p = (d.payload ?? {}) as Record<string, unknown>;
       return {
         id: d.id,
         docType: d.docType,
         documentNo: d.documentNo,
-        pdfUrl: d.pdfUrl,
+        pdfUrl: await fileLink(d),
         issuedAt: d.issuedAt,
         startup: d.startup,
         designation: p.designation ?? null,
       };
-    })
+    }))
   );
+});
+
+/**
+ * A fresh short-lived link to one of their own issued documents.
+ *
+ * Links in /me/documents expire after a few minutes, so the dashboard asks for
+ * a new one at the moment of download. Ownership is part of the query — a
+ * document that is not theirs (or was revoked) is indistinguishable from one
+ * that does not exist.
+ */
+router.get("/me/documents/:id/file", requireAuth, async (req, res) => {
+  const userId = req.user!.id;
+  const applications = await prisma.jobApplication.findMany({ where: { userId }, select: { id: true } });
+  const doc = await prisma.hrDocument.findFirst({
+    where: {
+      id: req.params.id as string,
+      revokedAt: null,
+      OR: [
+        { employee: { userId } },
+        { intern: { userId } },
+        { member: { userId } },
+        ...(applications.length ? [{ applicationId: { in: applications.map((a) => a.id) } }] : []),
+      ],
+    },
+    select: { pdfUrl: true, storagePath: true },
+  });
+  if (!doc) throw new AppError(404, "Document not found", "NOT_FOUND");
+  const url = await fileLink(doc);
+  if (!url) throw new AppError(404, "This document has no file yet", "NO_FILE");
+  ok(res, { url, expiresIn: LINK_TTL_SECONDS });
 });
 
 /** Their own month — days, statuses and attendance percentage. No money. */

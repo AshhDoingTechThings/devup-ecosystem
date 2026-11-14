@@ -1,5 +1,6 @@
 import { prisma } from "../../../lib/prisma";
 import { AppError } from "../../../middleware/errorHandler";
+import { assertSelfService, PERSON_ACTIVE } from "../../affiliations/affiliation.service";
 import { audit } from "../../shared/audit.service";
 import { notifyTenantRoles } from "../../shared/notification.service";
 import { policyFor } from "./intern.service";
@@ -23,11 +24,17 @@ export async function slotPolicyFor(startupId: string): Promise<R.SlotPolicy> {
   return { ...R.DEFAULT_SLOT_POLICY, ...base, ...(row ?? {}) } as R.SlotPolicy;
 }
 
+/**
+ * With a userId this is a self-service call: the record must be theirs, still
+ * current, and its access not withdrawn. Without one it is a tenant-scoped
+ * staff call and the route has already proven the caller's rank.
+ */
 async function internOrThrow(internId: string, userId?: string) {
   const intern = await prisma.intern.findFirst({
-    where: { id: internId, ...(userId ? { userId } : {}) },
+    where: { id: internId, ...(userId ? { userId, status: { in: [...PERSON_ACTIVE] } } : {}) },
   });
   if (!intern) throw new AppError(404, "Intern record not found", "NOT_FOUND");
+  if (userId) await assertSelfService(userId, intern.startupId);
   return intern;
 }
 

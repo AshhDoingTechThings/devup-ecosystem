@@ -1,7 +1,8 @@
 import { Prisma, HrDocType } from "@prisma/client";
 import { prisma } from "../../../lib/prisma";
 import { AppError } from "../../../middleware/errorHandler";
-import { uploadFile } from "../../../lib/storage";
+import { uploadPrivateFile } from "../../../lib/storage";
+import { hrDocumentsBucket, fileLink, withFileLinks } from "./documentFiles";
 import { env } from "../../../config/env";
 import { renderDocument, TemplateKey } from "./templates";
 import { LOGO_URL, SITE_URL } from "../../../lib/email/layout";
@@ -160,6 +161,9 @@ export async function regenerateFile(startupId: string, documentId: string) {
     html
   );
 
+  if (file.pdfBuffer && !file.stored) {
+    throw new AppError(503, "The file was rendered but could not be stored. Try again shortly.", "UPLOAD_FAILED");
+  }
   if (!file.pdfUrl) {
     throw new AppError(
       503,
@@ -169,49 +173,68 @@ export async function regenerateFile(startupId: string, documentId: string) {
     );
   }
 
-  return { documentNo: doc.documentNo, ...file, pdfBuffer: undefined };
+  return { documentNo: doc.documentNo, pdfUrl: file.pdfUrl, pdfGenerated: file.pdfGenerated };
 }
 
+/**
+ * Renders a document's file and stores it in the private HR-documents bucket.
+ *
+ * Never throws: the document is already a committed record, and a missing file
+ * can be rebuilt later with regenerateFile (same number). `pdfUrl` in the
+ * result is a short-lived signed link for the caller's immediate response;
+ * what is persisted is the object path, never a URL.
+ */
 export async function attachFile(doc: { id: string; docType: HrDocType; startupId: string; documentNo: string }, html: string) {
-  const base = `${doc.startupId}/${doc.docType.toLowerCase()}/${doc.id}`;
-  let pdfUrl: string | null = null;
-  let htmlUrl: string | null = null;
+  const base = `hr-documents/${doc.startupId}/${doc.docType.toLowerCase()}/${doc.id}`;
+  const bucket = hrDocumentsBucket();
+  let pdfPath: string | null = null;
+  let htmlPath: string | null = null;
   let pdfBuffer: Buffer | null = null;
-
-  try {
-    /**
-     * Stored as text/plain, not text/html.
-     *
-     * The bucket's allowed-MIME list rejects text/html, so every one of these
-     * uploads was failing — which also silently removed the fallback that was
-     * supposed to give a document *something* to link to when Chromium is
-     * unavailable. Plain text is accepted and the bytes are identical; it also
-     * means the file downloads rather than executing if anyone opens the URL.
-     */
-    htmlUrl = await uploadFile(env.STORAGE_BUCKET_DOCUMENTS, `${base}.html`, Buffer.from(html, "utf-8"), "text/plain");
-  } catch (err) {
-    logger.warn(`document HTML upload failed for ${doc.documentNo}: ${(err as Error).message}`);
-  }
 
   try {
     // ID cards are card-sized; everything else is A4.
     const pdf = await htmlToPdf(html, doc.docType === "ID_CARD" ? { width: "54mm", height: "86mm" } : {});
     if (pdf) {
       pdfBuffer = pdf;
-      pdfUrl = await uploadFile(env.STORAGE_BUCKET_DOCUMENTS, `${base}.pdf`, pdf, "application/pdf");
+      pdfPath = await uploadPrivateFile(bucket, `${base}.pdf`, pdf, "application/pdf");
     }
   } catch (err) {
-    logger.warn(`document PDF render failed for ${doc.documentNo}: ${(err as Error).message}`);
+    logger.warn(`document PDF render/store failed for ${doc.documentNo}: ${(err as Error).message}`);
   }
 
-  const finalUrl = pdfUrl ?? htmlUrl;
-  if (finalUrl) {
-    await prisma.hrDocument
-      .update({ where: { id: doc.id }, data: { pdfUrl: finalUrl } })
-      .catch((err) => logger.warn(`could not link file to ${doc.documentNo}: ${err.message}`));
+  if (!pdfBuffer) {
+    /**
+     * No PDF renderer: keep the HTML so the document has *something* to open.
+     * Stored as text/plain so it downloads rather than executing if opened.
+     */
+    try {
+      htmlPath = await uploadPrivateFile(bucket, `${base}.html`, Buffer.from(html, "utf-8"), "text/plain");
+    } catch (err) {
+      logger.warn(`document HTML store failed for ${doc.documentNo}: ${(err as Error).message}`);
+    }
   }
 
-  return { pdfUrl: finalUrl, htmlUrl, pdfBuffer, pdfGenerated: Boolean(pdfUrl) };
+  const storagePath = pdfPath ?? htmlPath;
+  let stored = false;
+  if (storagePath) {
+    stored = await prisma.hrDocument
+      .update({ where: { id: doc.id }, data: { storagePath, pdfUrl: null } })
+      .then(() => true)
+      .catch((err) => {
+        logger.error(`could not link stored file to ${doc.documentNo}: ${err.message}`);
+        return false;
+      });
+  }
+
+  const link = stored ? await fileLink({ storagePath }) : null;
+  return {
+    pdfUrl: link,
+    storagePath: stored ? storagePath : null,
+    pdfBuffer,
+    pdfGenerated: Boolean(pdfBuffer),
+    /** The file is in private storage and linked to the record. */
+    stored: stored && Boolean(pdfPath),
+  };
 }
 
 /** Convenience for callers with no transaction of their own. */
@@ -239,9 +262,10 @@ export async function revoke(
 }
 
 export async function list(db: any, docType?: HrDocType) {
-  return db.hrDocument.findMany({
+  const docs = await db.hrDocument.findMany({
     where: docType ? { docType } : {},
     orderBy: { issuedAt: "desc" },
     take: 200,
   });
+  return withFileLinks(docs);
 }

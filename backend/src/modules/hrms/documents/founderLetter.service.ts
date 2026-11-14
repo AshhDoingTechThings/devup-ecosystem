@@ -4,6 +4,7 @@ import { fiscalYear, nextSequence } from "../../../lib/numbering";
 import { notify } from "../../shared/notification.service";
 import { Emails } from "../../../lib/email/templates";
 import * as documents from "./document.service";
+import { withFileLink } from "./documentFiles";
 
 /**
  * Founder appointment letters.
@@ -51,7 +52,8 @@ export async function issueFounderLetter(input: IssueFounderLetterInput) {
     where: { memberId: member.id, docType: "FOUNDER_LETTER", revokedAt: null },
   });
   if (existing && !input.force) {
-    return { document: existing, created: false, pdfUrl: existing.pdfUrl };
+    const document = await withFileLink(existing);
+    return { document, created: false, pdfUrl: document.pdfUrl };
   }
 
   // Fails loudly when branding is unset rather than issuing an unbranded letter.
@@ -107,7 +109,8 @@ export async function issueFounderLetter(input: IssueFounderLetterInput) {
       : undefined,
   });
 
-  return { document: result, created: true, pdfUrl: file.pdfUrl, pdfGenerated: file.pdfGenerated };
+  const { html: _html, ...document } = result as typeof result & { html?: string };
+  return { document: { ...document, pdfUrl: file.pdfUrl }, created: true, pdfUrl: file.pdfUrl, pdfGenerated: file.pdfGenerated };
 }
 
 function titleFor(role: string) {
@@ -132,15 +135,15 @@ export async function listAllFounders() {
       },
       documents: {
         where: { docType: "FOUNDER_LETTER", revokedAt: null },
-        select: { id: true, documentNo: true, pdfUrl: true, issuedAt: true },
+        select: { id: true, documentNo: true, pdfUrl: true, storagePath: true, issuedAt: true },
         take: 1,
       },
     },
     orderBy: [{ startup: { name: "asc" } }, { createdAt: "asc" }],
   });
 
-  return members.map((m) => {
-    const letter = m.documents[0] ?? null;
+  return Promise.all(members.map(async (m) => {
+    const letter = m.documents[0] ? await withFileLink(m.documents[0]) : null;
     // Say exactly why someone cannot be sent one, rather than leaving the
     // button disabled with no explanation.
     const blocked = !m.startup.code
@@ -170,7 +173,7 @@ export async function listAllFounders() {
       canIssue: !blocked && !letter,
       blocked,
     };
-  });
+  }));
 }
 
 /** Issue to a founder from the platform admin, resolving their startup for them. */
