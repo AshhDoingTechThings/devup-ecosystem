@@ -151,6 +151,14 @@ export const candidateApi = {
   /** A joiner's own onboarding checklists, across every startup they joined. */
   myOnboarding: () => api.get<any[]>("/api/me/onboarding"),
   uploadMyDoc: (personId: string, docType: string, file: File) => {
+    // Same limits the server enforces (identity rule: 8 MB, JPG/PNG/WebP/PDF),
+    // checked first so a wrong file fails instantly instead of after uploading.
+    // The server still checks the real bytes; this is only for fast feedback.
+    if (!file.size) return Promise.reject(new Error("That file is empty. Choose another one."));
+    if (file.size > 8 * 1024 * 1024) return Promise.reject(new Error("That file is larger than 8 MB. Use a smaller scan or photo."));
+    if (!/\.(pdf|jpe?g|png|webp)$/i.test(file.name) && !/^(image\/(jpeg|png|webp)|application\/pdf)$/.test(file.type)) {
+      return Promise.reject(new Error("Upload a JPG, PNG, WebP or PDF."));
+    }
     const fd = new FormData();
     fd.append("docType", docType);
     fd.append("file", file);

@@ -1,15 +1,20 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { Suspense, useEffect, useState, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  Building2, Home, Upload, Check, Clock, CalendarDays, AlertCircle, ShieldCheck, Download, FileText,
+  Building2, Home, Clock, CalendarDays, ShieldCheck, Download, FileText,
 } from "lucide-react";
 import ProtectedContent from "@/components/auth/ProtectedContent";
-import { candidateApi, ONBOARDING_DOC_LABELS } from "@/lib/api/workspace";
+import { candidateApi } from "@/lib/api/workspace";
 import StartupLogo from "@/components/StartupLogo";
 import WorkUpdates from "@/components/worklog/WorkUpdates";
 import HowThisWorks from "@/components/worklog/HowThisWorks";
+import { affiliationApi, EmploymentRecord } from "@/lib/api/affiliation";
+import { StartupSwitcher, EmploymentDetails } from "@/components/workspace/StartupContext";
+import OnboardingDocRow from "@/components/workspace/OnboardingDocRow";
+import DocumentFileLink from "@/components/workspace/DocumentFileLink";
 
 /**
  * The intern's own dashboard.
@@ -21,6 +26,18 @@ import HowThisWorks from "@/components/worklog/HowThisWorks";
  * founder-only.
  */
 export default function MyInternshipPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#0a0a0a]" />}>
+      <MyInternship />
+    </Suspense>
+  );
+}
+
+function MyInternship() {
+  // Which startup's internship to show, from /workspace or the switcher.
+  // A filter over this person's own records only; the server decides access.
+  const requested = useSearchParams().get("startup")?.toUpperCase() ?? null;
+  const [internships, setInternships] = useState<EmploymentRecord[]>([]);
   const [cards, setCards] = useState<any[]>([]);
   const [checklists, setChecklists] = useState<any[]>([]);
   const [issued, setIssued] = useState<any[]>([]);
@@ -31,11 +48,13 @@ export default function MyInternshipPage() {
 
   const load = useCallback(async () => {
     try {
-      const [a, o, d] = await Promise.all([
+      const [a, o, d, e] = await Promise.all([
         candidateApi.myAttendance().catch(() => []),
         candidateApi.myOnboarding().catch(() => []),
         candidateApi.myDocuments().catch(() => []),
+        affiliationApi.employment().catch(() => [] as EmploymentRecord[]),
       ]);
+      setInternships((e ?? []).filter((r) => r.kind === "INTERN"));
       setCards(a ?? []);
       setChecklists(o ?? []);
       setIssued(d ?? []);
@@ -78,12 +97,23 @@ export default function MyInternshipPage() {
     }
   };
 
+  // Show one startup at a time when someone interns at several.
+  const current =
+    internships.find((r) => r.startup.code === requested)?.startup.code ??
+    (internships.length > 0 ? internships[0].startup.code : null);
+  const inScope = (code?: string | null) => !current || internships.length < 2 || code === current;
+  const currentRecord = internships.find((r) => r.startup.code === current) ?? null;
+  const shownCards = cards.filter((c) => inScope(c.startup?.code));
+  // Employee checklists live on /dashboard/employment now.
+  const shownChecklists = checklists.filter((l) => l.person?.kind !== "EMPLOYEE" && inScope(l.startup?.code));
+  const shownIssued = issued.filter((d) => inScope(d.startup?.code));
+
   return (
     <ProtectedContent blurRadius={12} message="Login to view your internship">
       <div className="min-h-screen bg-[#0a0a0a] pt-28 pb-24">
         <div className="max-w-3xl mx-auto px-6">
-          <Link href="/dashboard" className="text-[#c8f135] text-sm hover:underline mb-6 inline-block">
-            &larr; Back to Dashboard
+          <Link href="/workspace?stay=1" className="text-[#c8f135] text-sm hover:underline mb-6 inline-block">
+            &larr; My workspaces
           </Link>
 
           <h1 className="text-3xl text-white mb-1" style={{ fontFamily: "var(--font-syne)", fontWeight: 800 }}>
@@ -102,7 +132,7 @@ export default function MyInternshipPage() {
 
           {loading ? (
             <p className="text-[#6b6b6b] text-sm">Loading…</p>
-          ) : cards.length === 0 && checklists.length === 0 && issued.length === 0 ? (
+          ) : shownCards.length === 0 && shownChecklists.length === 0 && shownIssued.length === 0 && !currentRecord ? (
             <div className="p-10 rounded-xl border border-dashed border-white/10 text-center">
               <CalendarDays className="w-8 h-8 text-[#3d3d3d] mx-auto mb-3" />
               <p className="text-[#6b6b6b] text-sm">
@@ -111,10 +141,13 @@ export default function MyInternshipPage() {
             </div>
           ) : (
             <div className="space-y-6">
-              {/* Only shown to people who actually have an internship running. */}
-              {cards.length > 0 && <HowThisWorks />}
+              <StartupSwitcher records={internships} current={current} basePath="/dashboard/internship" />
+              {currentRecord && <EmploymentDetails record={currentRecord} />}
 
-              {cards.map((c) => (
+              {/* Only shown to people who actually have an internship running. */}
+              {shownCards.length > 0 && <HowThisWorks />}
+
+              {shownCards.map((c) => (
                 <div key={c.internId} className="space-y-6">
                   <InternshipCard card={c} busy={busy === c.internId} onAct={act} />
                   {/* Only meaningful once they are checked in for the day. */}
@@ -122,9 +155,9 @@ export default function MyInternshipPage() {
                 </div>
               ))}
 
-              {issued.length > 0 && <IssuedDocuments docs={issued} />}
+              {shownIssued.length > 0 && <IssuedDocuments docs={shownIssued} />}
 
-              {checklists.map((list) => (
+              {shownChecklists.map((list) => (
                 <DocumentsCard
                   key={list.person.id}
                   list={list}
@@ -392,59 +425,16 @@ function DocumentsCard({ list, busy, onUpload }: any) {
   );
 }
 
+/**
+ * One checklist line. Uses the shared row (the onboarding and employee pages
+ * use the same one). This page used to read `item.document?.status`, a field
+ * the API has never sent, so every document showed "Not uploaded" — even
+ * after a successful upload — and rejection reasons never appeared.
+ */
 function DocRow({ item, personId, busy, onUpload }: any) {
-  const status = item.document?.status ?? "MISSING";
-  const tone: Record<string, { bg: string; fg: string; label: string }> = {
-    APPROVED: { bg: "rgba(200,241,53,0.12)", fg: "#c8f135", label: "Approved" },
-    PENDING: { bg: "rgba(250,204,21,0.12)", fg: "#facc15", label: "Under review" },
-    REJECTED: { bg: "rgba(248,113,113,0.12)", fg: "#f87171", label: "Re-upload" },
-    MISSING: { bg: "rgba(255,255,255,0.04)", fg: "#6b6b6b", label: "Not uploaded" },
-  };
-  const t = tone[status] ?? tone.MISSING;
-  const canUpload = status !== "APPROVED";
-
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-white/[0.06] p-3">
-      <div className="min-w-0 flex-1">
-        <div className="text-[13px] text-[#e4e4e4]">
-          {ONBOARDING_DOC_LABELS[item.docType] ?? item.docType}
-          {item.required && <span className="text-[#f87171] ml-1">*</span>}
-        </div>
-        {status === "REJECTED" && item.document?.reviewNote && (
-          <div className="text-[11px] text-[#f87171] mt-0.5 flex items-start gap-1">
-            <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
-            {item.document.reviewNote}
-          </div>
-        )}
-      </div>
-
-      <span
-        className="shrink-0 rounded px-2 py-1 text-[10px] font-medium"
-        style={{ background: t.bg, color: t.fg }}
-      >
-        {status === "APPROVED" && <Check className="inline w-3 h-3 mr-0.5" />}
-        {t.label}
-      </span>
-
-      {canUpload && (
-        <label
-          className="shrink-0 cursor-pointer rounded-lg border border-white/10 px-2.5 py-1.5 text-[11px] text-[#a1a1a1] transition hover:border-white/25 hover:text-white"
-          style={busy ? { opacity: 0.4, pointerEvents: "none" } : undefined}
-        >
-          <Upload className="inline w-3 h-3 mr-1" />
-          {busy ? "…" : status === "MISSING" ? "Upload" : "Replace"}
-          <input
-            type="file"
-            className="hidden"
-            accept="application/pdf,image/jpeg,image/png,image/webp"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) onUpload(personId, item.docType, f);
-              e.target.value = "";
-            }}
-          />
-        </label>
-      )}
+    <div className="rounded-xl border border-white/[0.06] px-3">
+      <OnboardingDocRow item={item} personId={personId} uploading={busy} onUpload={onUpload} />
     </div>
   );
 }
@@ -489,15 +479,15 @@ function IssuedDocuments({ docs }: { docs: any[] }) {
               </div>
             </div>
             {d.pdfUrl ? (
-              <a
+              <DocumentFileLink
+                docId={d.id}
                 href={d.pdfUrl}
-                target="_blank"
-                rel="noopener noreferrer"
+                scope="me"
                 className="shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11.5px] font-medium transition"
                 style={{ background: "rgba(200,241,53,0.12)", color: "#c8f135" }}
               >
                 <Download className="w-3 h-3" /> Download
-              </a>
+              </DocumentFileLink>
             ) : (
               /* Issued but the file was never produced — say so plainly rather
                  than showing a dead button. HR can rebuild it. */

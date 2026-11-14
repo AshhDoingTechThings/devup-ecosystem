@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { FileText, ExternalLink, AlertTriangle } from "lucide-react";
 import { workspaceApi } from "@/lib/api/workspace";
+import DocumentFileLink from "@/components/workspace/DocumentFileLink";
 
 const TONE: Record<string, { bg: string; fg: string }> = {
   SENT: { bg: "rgba(250,204,21,0.1)", fg: "#facc15" },
@@ -98,14 +99,14 @@ export default function OffersPage() {
                     </td>
                     <td className="px-4 py-3">
                       {d.pdfUrl ? (
-                        <a
+                        <DocumentFileLink
+                          docId={d.id}
                           href={d.pdfUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                          scope={{ code }}
                           className="inline-flex items-center gap-1 text-[11px] text-[#8b8b8b] hover:text-white transition"
                         >
                           View <ExternalLink className="w-3 h-3" />
-                        </a>
+                        </DocumentFileLink>
                       ) : (
                         /* Issued but fileless — the candidate got an email with no
                            attachment, so say so rather than showing an empty cell. */

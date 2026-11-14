@@ -6,7 +6,7 @@ import { useParams, usePathname } from "next/navigation";
 import {
   LayoutDashboard, Briefcase, Users, CalendarDays, FileText,
   UserCheck, GraduationCap, Settings, ChevronDown, AlertCircle,
-  CalendarCheck, Star, FileCheck, ArrowLeft, ClipboardCheck, IndianRupee, ListChecks,
+  CalendarCheck, Star, FileCheck, ArrowLeft, ClipboardCheck, IndianRupee, ListChecks, UserPlus,
 } from "lucide-react";
 import { workspaceApi, Workspace } from "@/lib/api/workspace";
 import StartupLogo from "@/components/StartupLogo";
@@ -17,6 +17,8 @@ const NAV = [
   { href: "/applications", label: "Applicants", icon: Users },
   { href: "/interviews", label: "Interviews", icon: CalendarDays },
   { href: "/offers", label: "Offers", icon: FileText },
+  // Who joins is an HR decision; the server enforces the same floor.
+  { href: "/requests", label: "Team Requests", icon: UserPlus, hrOnly: true },
   { href: "/onboarding", label: "Onboarding", icon: ClipboardCheck },
   { href: "/employees", label: "Employees", icon: UserCheck },
   { href: "/interns", label: "Interns", icon: GraduationCap },
@@ -32,6 +34,7 @@ const NAV = [
 ];
 
 const FOUNDER_ROLES = ["SUPER_ADMIN", "FOUNDER", "OWNER"];
+const HR_ROLES = [...FOUNDER_ROLES, "ADMIN", "HR"];
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const { code } = useParams<{ code: string }>();
@@ -119,7 +122,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
           </div>
 
           <nav className="flex-1 px-3 py-4 space-y-1">
-            {NAV.filter((i) => !i.founderOnly || FOUNDER_ROLES.includes(current?.role ?? "")).map(({ href, label, icon: Icon }) => {
+            {NAV.filter((i) => (!i.founderOnly || FOUNDER_ROLES.includes(current?.role ?? "")) && (!i.hrOnly || HR_ROLES.includes(current?.role ?? ""))).map(({ href, label, icon: Icon }) => {
               const full = `${base}${href}`;
               const active = href === "" ? pathname === base : pathname.startsWith(full);
               return (

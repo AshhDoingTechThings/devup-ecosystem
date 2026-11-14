@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { FileText, ExternalLink, Plus, X, AlertCircle } from "lucide-react";
 import { workspaceApi } from "@/lib/api/workspace";
+import DocumentFileLink from "@/components/workspace/DocumentFileLink";
 
 const input = "w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-[#e4e4e4] text-xs outline-none focus:border-[#c8f135]/40";
 const labelCls = "block text-[10px] text-[#6b6b6b] mb-1";
@@ -129,9 +130,9 @@ export default function DocumentsPage() {
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     {d.pdfUrl && (
-                      <a href={d.pdfUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[11px] text-[#8b8b8b] hover:text-white transition">
+                      <DocumentFileLink docId={d.id} href={d.pdfUrl} scope={{ code }} className="inline-flex items-center gap-1 text-[11px] text-[#8b8b8b] hover:text-white transition">
                         View <ExternalLink className="w-3 h-3" />
-                      </a>
+                      </DocumentFileLink>
                     )}
                   </td>
                 </tr>

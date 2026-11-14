@@ -6,6 +6,7 @@ import {
   Mail, Phone, GraduationCap, Briefcase, Calendar, IdCard, ShieldCheck,
 } from "lucide-react";
 import { workspaceApi, ONBOARDING_DOC_LABELS, DOC_STATUS_TONE } from "@/lib/api/workspace";
+import DocumentFileLink from "@/components/workspace/DocumentFileLink";
 
 /**
  * Everything about one person: their record, what they have uploaded, what the
@@ -239,10 +240,10 @@ export default function PersonDrawer({
                           )}
                           <span className="text-[10.5px] text-[#6b6b6b]">{fmt(d.issuedAt)}</span>
                           {d.pdfUrl && (
-                            <a href={d.pdfUrl} target="_blank" rel="noopener noreferrer"
+                            <DocumentFileLink docId={d.id} href={d.pdfUrl} scope={{ code }}
                                className="inline-flex items-center gap-1 text-[11px] text-[#8b8b8b] hover:text-white">
                               Open <ExternalLink className="h-3 w-3" />
-                            </a>
+                            </DocumentFileLink>
                           )}
                         </div>
                       </div>
