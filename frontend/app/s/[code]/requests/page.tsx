@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { CheckCircle2, Clock, GraduationCap, History, Mail, ShieldOff, UserCheck, X, XCircle, Info, Search } from "lucide-react";
+import { CheckCircle2, Clock, GraduationCap, History, Mail, Pencil, ShieldOff, UserCheck, X, XCircle, Info, Search } from "lucide-react";
 import StatusBadge from "@/components/workspace/StatusBadge";
 import { joinRequestAdminApi } from "@/lib/api/affiliation";
+import { workspaceApi } from "@/lib/api/workspace";
+import EditPersonDialog from "@/components/workspace/EditPersonDialog";
 
 /**
  * Employee & intern requests for one startup.
@@ -39,6 +41,7 @@ export default function JoinRequestsPage() {
   const [noticeTone, setNoticeTone] = useState<"ok" | "warn">("ok");
   const [openId, setOpenId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [editId, setEditId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -214,13 +217,23 @@ export default function JoinRequestsPage() {
                           {tab === "pending" ? "Review" : "View"}
                         </button>
                       ) : tab === "deactivated" ? (
-                        <button onClick={() => personAction(r, "reactivate")} className="rounded-lg border border-white/10 px-3 py-1.5 text-[12.5px] text-white transition hover:bg-white/5">
-                          Reactivate
-                        </button>
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => setEditId(r.id)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-[12.5px] text-white transition hover:bg-white/5">
+                            <Pencil className="h-3.5 w-3.5" /> Edit
+                          </button>
+                          <button onClick={() => personAction(r, "reactivate")} className="rounded-lg border border-white/10 px-3 py-1.5 text-[12.5px] text-white transition hover:bg-white/5">
+                            Reactivate
+                          </button>
+                        </div>
                       ) : (
-                        <button onClick={() => personAction(r, "deactivate")} className="rounded-lg border border-red-500/20 px-3 py-1.5 text-[12.5px] text-red-300 transition hover:bg-red-500/10">
-                          Deactivate
-                        </button>
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => setEditId(r.id)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-[12.5px] font-semibold text-white transition hover:border-[#c8f135]/40 hover:text-[#c8f135]">
+                            <Pencil className="h-3.5 w-3.5" /> Edit
+                          </button>
+                          <button onClick={() => personAction(r, "deactivate")} className="rounded-lg border border-red-500/20 px-3 py-1.5 text-[12.5px] text-red-300 transition hover:bg-red-500/10">
+                            Deactivate
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -230,7 +243,16 @@ export default function JoinRequestsPage() {
           </div>
         )}
       </div>
-      <p className="mt-3 text-[11.5px] text-[#6b6b6b]">HR can review requests. Deactivating and reactivating needs an admin or founder.</p>
+      <p className="mt-3 text-[11.5px] text-[#6b6b6b]">HR can review requests and edit team details. Deactivating and reactivating needs an admin or founder.</p>
+
+      {editId && (
+        <EditPersonDialog
+          code={code}
+          personId={editId}
+          onClose={() => setEditId(null)}
+          onSaved={(p) => { setEditId(null); setNoticeTone("ok"); setNotice(`${p.fullName}'s details were updated.`); load(); }}
+        />
+      )}
 
       {openId && (
         <ReviewDrawer
@@ -238,14 +260,18 @@ export default function JoinRequestsPage() {
           id={openId}
           onClose={() => setOpenId(null)}
           onDone={(msg, tone = "ok") => { setOpenId(null); setNoticeTone(tone); setNotice(msg); load(); }}
+          onEdited={load}
         />
       )}
     </div>
   );
 }
 
-function ReviewDrawer({ code, id, onClose, onDone }: { code: string; id: string; onClose: () => void; onDone: (msg: string, tone?: "ok" | "warn") => void }) {
+function ReviewDrawer({ code, id, onClose, onDone, onEdited }: { code: string; id: string; onClose: () => void; onDone: (msg: string, tone?: "ok" | "warn") => void; onEdited: () => void }) {
   const [r, setR] = useState<any>(null);
+  const [record, setRecord] = useState<any>(null);
+  const [editing, setEditing] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<null | "approve" | "reject" | "info">(null);
   const [text, setText] = useState("");
@@ -270,14 +296,15 @@ function ReviewDrawer({ code, id, onClose, onDone }: { code: string; id: string;
       });
       // Interns get their offer letter by default; employees only if asked (as with a direct hire).
       setSendLetter(d.kind === "INTERN");
+      if (d.person) workspaceApi.person(code, d.person.id).then(setRecord).catch(() => setRecord(null));
     }).catch((e) => setError(e.message));
   }, [code, id]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !editing && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, editing]);
 
   const open = r && (r.status === "PENDING" || r.status === "NEEDS_INFO");
 
@@ -387,8 +414,32 @@ function ReviewDrawer({ code, id, onClose, onDone }: { code: string; id: string;
               )}
 
               {r.person && (
-                <section className="rounded-lg border border-[#c8f135]/20 bg-[#c8f135]/[0.04] p-3 text-[13px] text-[#c4c4c4]">
-                  Linked {r.person.kind === "INTERN" ? "intern" : "employee"} record <span className="font-mono text-white">{r.person.code}</span> · {r.person.status.toLowerCase()}
+                <section className="rounded-lg border border-[#c8f135]/20 bg-[#c8f135]/[0.04] p-3 text-[13px] text-[#c4c4c4]" aria-label="Current record">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      Linked {r.person.kind === "INTERN" ? "intern" : "employee"} record <span className="font-mono text-white">{r.person.code}</span> · {r.person.status.toLowerCase()}
+                    </span>
+                    <button
+                      onClick={() => { setSaved(false); setEditing(true); }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1.5 text-[12.5px] font-semibold text-white transition hover:border-[#c8f135]/40 hover:text-[#c8f135]"
+                    >
+                      <Pencil className="h-3.5 w-3.5" /> Edit details
+                    </button>
+                  </div>
+                  {saved && <p role="status" className="mt-2 text-[#c8f135]" style={{ fontSize: 12.5, lineHeight: 1.4 }}>Details saved.</p>}
+                  {record && (
+                    <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-white/[0.06] pt-3 text-sm">
+                      <Item k="Name" v={record.fullName} />
+                      <Item k="Phone" v={record.phone} />
+                      <Item k="Designation" v={record.designation} />
+                      <Item k="Department" v={record.department} />
+                      {record.kind === "INTERN" && <Item k="College" v={record.college} />}
+                      <Item k={record.kind === "INTERN" ? "Start date" : "Joined"} v={record.joinedAt && fmt(record.joinedAt)} />
+                      {record.kind === "INTERN" && <Item k="End date" v={record.endDate && fmt(record.endDate)} />}
+                      <Item k={record.kind === "INTERN" ? "Stipend" : "CTC"} v={record.kind === "INTERN" ? record.stipend : record.ctc} />
+                      <Item k={record.kind === "INTERN" ? "Mentor" : "Manager"} v={record.supervisors?.find((s: any) => s.userId === record.managerId)?.name ?? (record.managerId ? "Assigned" : null)} />
+                    </dl>
+                  )}
                 </section>
               )}
 
@@ -396,7 +447,7 @@ function ReviewDrawer({ code, id, onClose, onDone }: { code: string; id: string;
                 <section className="rounded-lg border border-white/10 bg-white/[0.02] p-3 text-[13px] text-[#c4c4c4]" aria-label="Offer letter">
                   <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
                     <span className="text-[10.5px] font-semibold uppercase tracking-wider text-[#6b6b6b]">Offer letter</span>
-                    {r.offer?.status ? <LetterBadge status={r.offer.status} /> : <span className="text-[11.5px] text-[#6b6b6b]">Not issued</span>}
+                    {r.offer?.status ? <LetterBadge status={r.offer.stuck ? "STUCK" : r.offer.status} /> : <span className="text-[11.5px] text-[#6b6b6b]">Not issued</span>}
                   </div>
                   {r.offer?.documentNo && <div className="font-mono text-white">{r.offer.documentNo}</div>}
                   {r.offer?.status === "SENT" && r.offer.sentAt && (
@@ -405,10 +456,18 @@ function ReviewDrawer({ code, id, onClose, onDone }: { code: string; id: string;
                   {r.offer?.status === "FAILED" && (
                     <p className="mt-1 text-[12.5px] text-amber-200/90">{r.offer.message} <span className="text-[#6b6b6b]">({r.offer.attempts} attempt{r.offer.attempts === 1 ? "" : "s"})</span></p>
                   )}
-                  {(r.offer?.status === "FAILED" || !r.offer?.status) && (
+                  {r.offer?.stuck && (
+                    <p className="mt-1 text-amber-200/90" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+                      This letter didn&apos;t finish sending: the server restarted part-way through, so we can&apos;t confirm it reached {r.fullName}. Send it again if they don&apos;t have it.
+                    </p>
+                  )}
+                  {(r.offer?.status === "FAILED" || !r.offer?.status || r.offer?.stuck) && (
                     <button
                       onClick={async () => {
-                        if (!window.confirm(r.offer?.documentNo ? `Re-send ${r.offer.documentNo} to ${r.fullName}?` : `Issue and email an offer letter to ${r.fullName}?`)) return;
+                        const question = r.offer?.stuck
+                          ? `Send ${r.offer.documentNo ?? "the offer letter"} to ${r.user.email} again? If the first attempt did go out, they will get a second copy.`
+                          : r.offer?.documentNo ? `Re-send ${r.offer.documentNo} to ${r.fullName}?` : `Issue and email an offer letter to ${r.fullName}?`;
+                        if (!window.confirm(question)) return;
                         setLetterBusy(true);
                         setError(null);
                         try {
@@ -422,7 +481,7 @@ function ReviewDrawer({ code, id, onClose, onDone }: { code: string; id: string;
                       disabled={letterBusy}
                       className="mt-2 rounded-lg border border-white/15 px-3 py-1.5 text-[12.5px] font-semibold text-white transition hover:bg-white/5 disabled:opacity-50"
                     >
-                      {letterBusy ? "Sending…" : r.offer?.documentNo ? "Retry sending" : "Issue offer letter"}
+                      {letterBusy ? "Sending…" : r.offer?.stuck ? "Send again" : r.offer?.documentNo ? "Retry sending" : "Issue offer letter"}
                     </button>
                   )}
                 </section>
@@ -556,6 +615,20 @@ function ReviewDrawer({ code, id, onClose, onDone }: { code: string; id: string;
           </footer>
         )}
       </aside>
+      {editing && r?.person && (
+        <EditPersonDialog
+          code={code}
+          personId={r.person.id}
+          onClose={() => setEditing(false)}
+          onSaved={async (p) => {
+            setEditing(false);
+            setRecord(p);
+            setSaved(true);
+            try { setR(await joinRequestAdminApi.get(code, id)); } catch { /* keep what we have */ }
+            onEdited();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -570,6 +643,7 @@ const HISTORY_LABEL: Record<string, string> = {
   "affiliation.cancelled": "Withdrawn by requester",
   "affiliation.offer_sent": "Offer letter emailed",
   "affiliation.offer_failed": "Offer letter not sent",
+  "hrms.person_updated": "Details edited",
 };
 
 function Item({ k, v }: { k: string; v?: string | number | null }) {
@@ -599,6 +673,7 @@ function LetterBadge({ status, className = "" }: { status: string; className?: s
   const tone =
     status === "SENT" ? { t: "Letter sent", c: "bg-[#c8f135]/10 text-[#c8f135] border-[#c8f135]/25" }
     : status === "FAILED" ? { t: "Letter failed", c: "bg-red-500/10 text-red-300 border-red-500/25" }
+    : status === "STUCK" ? { t: "Letter stuck", c: "bg-amber-500/10 text-amber-300 border-amber-500/25" }
     : { t: "Sending letter", c: "bg-amber-500/10 text-amber-300 border-amber-500/25" };
   return <span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-[10.5px] font-semibold ${tone.c} ${className}`}>{tone.t}</span>;
 }

@@ -551,17 +551,42 @@ router.get("/:code/team/:personId", requireTenantRank("MANAGER"), async (req, re
   );
 });
 
-router.patch("/:code/team/:personId", requireTenantRank("HR"), async (req, res) => {
-  ok(
-    res,
-    await people.updatePerson({
-      startupId: req.startupId!,
-      personId: req.params.personId as string,
-      actorId: req.user!.id,
-      data: req.body ?? {},
-    })
-  );
+const optText = (max: number) => z.string().max(max).nullable().optional();
+const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}/, "Use a date like 2026-12-31").optional();
+const personEditBody = z.object({
+  fullName: z.string().max(120).optional(),
+  phone: optText(30),
+  designation: z.string().max(120).optional(),
+  department: optText(120),
+  supervisorUserId: z.string().max(64).nullable().optional(),
+  college: optText(200),
+  stipend: optText(120),
+  stipendAmount: z.number().int().min(0).max(100_000_000).nullable().optional(),
+  startDate: dateStr,
+  endDate: dateStr,
+  ctc: optText(120),
+  employmentType: z.enum(["INTERNSHIP", "FULL_TIME", "PART_TIME", "CONTRACT"]).optional(),
+  joinedAt: dateStr,
 });
+
+router.patch(
+  "/:code/team/:personId",
+  requireTenantRank("HR"),
+  validate(z.object({ body: personEditBody })),
+  async (req, res) => {
+    // Only the declared fields reach the service (validate keeps unknown keys on req.body).
+    const data = personEditBody.parse(req.body ?? {});
+    ok(
+      res,
+      await people.updatePerson({
+        startupId: req.startupId!,
+        personId: req.params.personId as string,
+        actorId: req.user!.id,
+        data,
+      })
+    );
+  }
+);
 
 /** Removing someone is Admin-only — it destroys their uploaded documents too. */
 router.delete("/:code/team/:personId", requireTenantRank("ADMIN"), async (req, res) => {

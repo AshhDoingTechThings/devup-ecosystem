@@ -3,10 +3,11 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   X, FileText, ExternalLink, Check, Upload, Trash2, AlertTriangle,
-  Mail, Phone, GraduationCap, Briefcase, Calendar, IdCard, ShieldCheck,
+  Mail, Phone, GraduationCap, Briefcase, Calendar, IdCard, ShieldCheck, Pencil,
 } from "lucide-react";
 import { workspaceApi, ONBOARDING_DOC_LABELS, DOC_STATUS_TONE } from "@/lib/api/workspace";
 import DocumentFileLink from "@/components/workspace/DocumentFileLink";
+import EditPersonDialog from "@/components/workspace/EditPersonDialog";
 
 /**
  * Everything about one person: their record, what they have uploaded, what the
@@ -30,6 +31,7 @@ export default function PersonDrawer({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<null | { message: string; force: boolean }>(null);
+  const [editing, setEditing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -133,12 +135,24 @@ export default function PersonDrawer({
               {notice && <Banner tone="ok">{notice}</Banner>}
 
               {/* Details */}
-              <Section title="Details">
+              <Section
+                title="Details"
+                action={
+                  <button
+                    onClick={() => setEditing(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-[11px] text-[#e4e4e4] transition hover:bg-white/10"
+                  >
+                    <Pencil className="h-3 w-3" /> Edit
+                  </button>
+                }
+              >
                 <div className="grid grid-cols-2 gap-x-4 gap-y-3">
                   <Field icon={Mail} label="Email" value={p.email} />
                   <Field icon={Phone} label="Phone" value={p.phone} />
                   <Field icon={IdCard} label={p.kind === "INTERN" ? "Intern ID" : "Employee ID"} value={p.code} mono />
                   <Field icon={Briefcase} label="Designation" value={p.designation} />
+                  <Field label="Department" value={p.department} />
+                  <Field label={p.kind === "INTERN" ? "Mentor" : "Manager"} value={p.supervisors?.find((s: any) => s.userId === p.managerId)?.name ?? (p.managerId ? "Assigned" : null)} />
                   <Field icon={Calendar} label={p.kind === "INTERN" ? "Start date" : "Joined"} value={fmt(p.joinedAt)} />
                   {p.kind === "INTERN"
                     ? <Field icon={Calendar} label="End date" value={fmt(p.endDate)} />
@@ -295,6 +309,22 @@ export default function PersonDrawer({
           </>
         )}
       </div>
+      {editing && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <EditPersonDialog
+            code={code}
+            personId={personId}
+            onClose={() => setEditing(false)}
+            onSaved={(updated) => {
+              setEditing(false);
+              setP(updated);
+              setError(null);
+              setNotice("Details saved");
+              onChanged?.();
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -265,6 +265,29 @@ if (!DB) {
       assert.equal(mailsTo(person.email).length, 1);
     });
 
+    test("a letter left at SENDING by a restart is shown as stuck after 10 minutes and can be sent again — once", async () => {
+      const { person, requestId } = await approvedIntern("intern-stuck", zappy, zFounder);
+      const sent = mailsTo(person.email).length;
+      // What a restart mid-send leaves behind: SENDING, no result recorded.
+      await h.prisma.$executeRaw`UPDATE "StartupJoinRequest" SET "offerStatus"='SENDING', "offerSentAt"=NULL, "updatedAt"=(now() at time zone 'utc') WHERE id=${requestId}`;
+      let d = (await h.call("GET", w(zappy, `/join-requests/${requestId}`), zFounder.token)).body.data;
+      assert.equal(d.offer.stuck, false, "a send in progress is not stuck");
+      assert.equal((await retry(zappy, zFounder, requestId)).status, 409);
+
+      await h.prisma.$executeRaw`UPDATE "StartupJoinRequest" SET "updatedAt"=(now() at time zone 'utc') - interval '11 minutes' WHERE id=${requestId}`;
+      d = (await h.call("GET", w(zappy, `/join-requests/${requestId}`), zFounder.token)).body.data;
+      assert.equal(d.offer.stuck, true);
+      const docNo = d.offer.documentNo;
+      const r = await retry(zappy, zFounder, requestId);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      d = (await h.call("GET", w(zappy, `/join-requests/${requestId}`), zFounder.token)).body.data;
+      assert.equal(d.offer.status, "SENT");
+      assert.equal(d.offer.stuck, false);
+      assert.equal(d.offer.documentNo, docNo, "same letter, same number");
+      assert.equal(mailsTo(person.email).length, sent + 1);
+      assert.equal((await retry(zappy, zFounder, requestId)).status, 409, "a SENT letter is never re-sent");
+    });
+
     test("letters are tenant-scoped: other startups and non-HR cannot touch them", async () => {
       sw.mail = false;
       const { person, requestId } = await approvedIntern("intern-scope", zappy, zFounder);

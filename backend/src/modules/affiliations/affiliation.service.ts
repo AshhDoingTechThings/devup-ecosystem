@@ -7,7 +7,7 @@ import { nextEmployeeCode, nextInternCode } from "../../lib/numbering";
 import { Emails } from "../../lib/email/templates";
 import { audit } from "../shared/audit.service";
 import { notify, notifyTenantRoles } from "../shared/notification.service";
-import { deliverOfferLetter, offerReasonText, OfferResult } from "./offerLetter.service";
+import { deliverOfferLetter, offerReasonText, OfferResult, STALE_SENDING_MS } from "./offerLetter.service";
 
 /**
  * Startup affiliation: someone says "I work at this startup", the startup's
@@ -631,8 +631,15 @@ export async function getRequest(startupId: string, requestId: string) {
     orderBy: { createdAt: "asc" },
   });
 
+  // The request's own events, plus later edits to the record it created.
+  const linkedPersonId = r.employee?.id ?? r.intern?.id;
   const events = await prisma.auditLog.findMany({
-    where: { entity: "StartupJoinRequest", entityId: r.id },
+    where: {
+      OR: [
+        { entity: "StartupJoinRequest", entityId: r.id },
+        ...(linkedPersonId ? [{ action: "hrms.person_updated", entityId: linkedPersonId }] : []),
+      ],
+    },
     orderBy: { createdAt: "asc" },
     select: { action: true, adminId: true, createdAt: true, metadata: true },
   });
@@ -682,6 +689,8 @@ export async function getRequest(startupId: string, requestId: string) {
           message: offerReasonText(r.offerError),
           attempts: r.offerAttempts,
           sentAt: r.offerSentAt,
+          // Left at SENDING by a server restart mid-send: retryable now.
+          stuck: r.offerStatus === "SENDING" && Date.now() - r.updatedAt.getTime() > STALE_SENDING_MS,
         }
       : null,
     supervisors: supervisorSeats.map((m) => ({ userId: m.userId, role: m.role, name: m.user?.profile?.name ?? "Unnamed" })),

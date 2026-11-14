@@ -35,7 +35,7 @@ export type OfferResult = {
 };
 
 /** A stuck SENDING (the server died mid-send) becomes retryable after this. */
-const STALE_SENDING_MS = 10 * 60_000;
+export const STALE_SENDING_MS = 10 * 60_000;
 
 /** Reasons an admin can act on; no personal data. */
 const REASON_TEXT: Record<string, string> = {

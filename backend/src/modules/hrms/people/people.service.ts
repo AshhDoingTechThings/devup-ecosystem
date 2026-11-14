@@ -89,7 +89,11 @@ export async function getPerson(startupId: string, personId: string, opts: { can
     // Intern-only
     college: intern?.college ?? null,
     stipend: intern?.stipend ?? null,
+    stipendAmount: intern?.stipendAmount ?? null,
     endDate: intern?.endDate ?? null,
+
+    /** Who can be picked as their mentor/manager when editing. */
+    supervisors: await supervisorOptions(startupId),
 
     /** Where they came from — null for a direct hire. */
     application: p.application
@@ -187,43 +191,131 @@ export async function deletePerson(args: {
   return { deleted: true, code, fullName: p.fullName };
 }
 
-/** Edit the mutable parts of a person's record. */
+export const SUPERVISOR_ROLES = ["OWNER", "FOUNDER", "ADMIN", "HR", "RECRUITER", "MANAGER", "EMPLOYEE"] as const;
+
+/** Who can be someone's mentor or manager: active members of this startup with an account. */
+export async function supervisorOptions(startupId: string) {
+  const seats = await prisma.startupMember.findMany({
+    where: { startupId, status: "ACTIVE", userId: { not: null }, role: { in: [...SUPERVISOR_ROLES] as never[] } },
+    select: { userId: true, role: true, user: { select: { profile: { select: { name: true } } } } },
+    orderBy: { createdAt: "asc" },
+  });
+  // One entry per person, even if they hold two seats.
+  const seen = new Set<string>();
+  return seats
+    .filter((s) => s.userId && !seen.has(s.userId) && seen.add(s.userId))
+    .map((s) => ({ userId: s.userId as string, role: s.role, name: s.user?.profile?.name ?? "Unnamed" }));
+}
+
+export interface PersonEdit {
+  fullName?: string;
+  phone?: string | null;
+  designation?: string;
+  department?: string | null;
+  supervisorUserId?: string | null;
+  // Intern
+  college?: string | null;
+  stipend?: string | null;
+  stipendAmount?: number | null;
+  startDate?: string;
+  endDate?: string;
+  // Employee
+  ctc?: string | null;
+  employmentType?: "INTERNSHIP" | "FULL_TIME" | "PART_TIME" | "CONTRACT";
+  joinedAt?: string;
+}
+
+const LABELS: Record<string, string> = {
+  fullName: "name", phone: "phone", designation: "designation", department: "department",
+  college: "college", stipend: "stipend", stipendAmount: "monthly stipend", startDate: "start date",
+  endDate: "end date", ctc: "CTC", employmentType: "employment type", joinedAt: "joining date",
+  mentorId: "mentor", managerId: "manager",
+};
+
+function dateOrThrow(v: string, field: string) {
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) throw new AppError(400, `Invalid ${field}`, "INVALID_DATE");
+  return d;
+}
+
+/** "" means "clear it" for optional text; undefined means "leave it alone". */
+const optText = (v: string | null | undefined) => (v === undefined ? undefined : v === null || v.trim() === "" ? null : v.trim());
+
+/**
+ * Edit a person's record. Email is not editable here: it is how their record,
+ * workspace seat and DevUp account are matched, so changing it would detach
+ * them. Access (active / deactivated) has its own actions.
+ */
 export async function updatePerson(args: {
   startupId: string;
   personId: string;
   actorId: string;
-  data: Record<string, unknown>;
+  data: PersonEdit;
 }) {
-  const { employee, intern } = await resolve(args.startupId, args.personId);
+  const { kind, employee, intern } = await resolve(args.startupId, args.personId);
   const d = args.data;
+  const before: any = employee ?? intern;
 
-  const common = {
-    fullName: d.fullName as string | undefined,
-    phone: d.phone as string | undefined,
-    designation: d.designation as string | undefined,
-    department: d.department as string | undefined,
-  };
-  const clean = Object.fromEntries(Object.entries(common).filter(([, v]) => v !== undefined));
+  const data: Record<string, unknown> = {};
+  if (d.fullName !== undefined) {
+    if (!d.fullName.trim()) throw new AppError(400, "Name can't be empty", "VALIDATION_ERROR");
+    data.fullName = d.fullName.trim();
+  }
+  if (d.designation !== undefined) {
+    if (!d.designation.trim()) throw new AppError(400, "Designation can't be empty", "VALIDATION_ERROR");
+    data.designation = d.designation.trim();
+  }
+  if (d.phone !== undefined) data.phone = optText(d.phone);
+  if (d.department !== undefined) data.department = optText(d.department);
 
-  if (employee) {
-    return prisma.employee.update({
-      where: { id: employee.id },
-      data: {
-        ...clean,
-        ctc: d.ctc as string | undefined,
-        ...(d.joinedAt ? { joinedAt: new Date(d.joinedAt as string) } : {}),
-      },
-    });
+  if (d.supervisorUserId !== undefined) {
+    let supervisor: string | null = null;
+    if (d.supervisorUserId) {
+      const ok = (await supervisorOptions(args.startupId)).some((s) => s.userId === d.supervisorUserId);
+      if (!ok) throw new AppError(400, "The mentor or manager must be an active member of this startup.", "INVALID_SUPERVISOR");
+      if (before.userId && before.userId === d.supervisorUserId) {
+        throw new AppError(400, "Someone can't be their own mentor or manager.", "INVALID_SUPERVISOR");
+      }
+      supervisor = d.supervisorUserId;
+    }
+    data[employee ? "managerId" : "mentorId"] = supervisor;
   }
 
-  return prisma.intern.update({
-    where: { id: intern!.id },
-    data: {
-      ...clean,
-      college: d.college as string | undefined,
-      stipend: d.stipend as string | undefined,
-      ...(d.startDate ? { startDate: new Date(d.startDate as string) } : {}),
-      ...(d.endDate ? { endDate: new Date(d.endDate as string) } : {}),
-    },
+  if (employee) {
+    if (d.ctc !== undefined) data.ctc = optText(d.ctc);
+    if (d.employmentType !== undefined) data.employmentType = d.employmentType;
+    if (d.joinedAt) data.joinedAt = dateOrThrow(d.joinedAt, "joining date");
+  } else {
+    if (d.college !== undefined) data.college = optText(d.college);
+    if (d.stipend !== undefined) data.stipend = optText(d.stipend);
+    if (d.stipendAmount !== undefined) data.stipendAmount = d.stipendAmount;
+    if (d.startDate) data.startDate = dateOrThrow(d.startDate, "start date");
+    if (d.endDate) data.endDate = dateOrThrow(d.endDate, "end date");
+    const start = (data.startDate as Date | undefined) ?? intern!.startDate;
+    const end = (data.endDate as Date | undefined) ?? intern!.endDate;
+    if (end <= start) throw new AppError(400, "The end date must be after the start date.", "INVALID_DATE");
+  }
+
+  // Only what actually changed is written and recorded.
+  const same = (a: unknown, b: unknown) =>
+    a instanceof Date || b instanceof Date
+      ? new Date(a as any).getTime() === new Date(b as any).getTime()
+      : (a ?? null) === (b ?? null);
+  const changed = Object.keys(data).filter((k) => !same(data[k], before[k]));
+  if (changed.length === 0) return getPerson(args.startupId, args.personId);
+
+  const patch = Object.fromEntries(changed.map((k) => [k, data[k]]));
+  if (employee) await prisma.employee.update({ where: { id: employee.id }, data: patch });
+  else await prisma.intern.update({ where: { id: intern!.id }, data: patch });
+
+  await audit({
+    action: "hrms.person_updated",
+    entity: kind === "EMPLOYEE" ? "Employee" : "Intern",
+    entityId: args.personId,
+    actorId: args.actorId,
+    startupId: args.startupId,
+    metadata: { fields: changed, message: `Changed ${changed.map((k) => LABELS[k] ?? k).join(", ")}` },
   });
+
+  return getPerson(args.startupId, args.personId);
 }
