@@ -18,6 +18,7 @@ import {
   Stamp,
   Package,
   Briefcase as BriefcaseBusiness,
+  UserCheck,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 
@@ -25,6 +26,7 @@ const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/applications', icon: FileText, label: 'Applications' },
   { to: '/lead-applications', icon: GraduationCap, label: 'Lead Applications' },
+  { to: '/workspace-requests', icon: UserCheck, label: 'Workspace Requests' },
   { to: '/lead-appointments', icon: Stamp, label: 'Lead Appointments' },
   { to: '/startups', icon: Building2, label: 'Startups' },
   { to: '/users', icon: Users, label: 'Users' },

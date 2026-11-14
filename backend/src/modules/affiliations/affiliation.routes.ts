@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { validate } from "../../middleware/validate";
 import * as affiliation from "./affiliation.service";
+import * as offerLetters from "./offerLetter.service";
 
 const ok = (res: any, data: unknown, status = 200) => res.status(status).json({ success: true, data });
 
@@ -78,16 +79,6 @@ meAffiliationRouter.post(
   }
 );
 
-// ── Platform admin: /api/admin/affiliations ──────────────────────────────
-export const adminAffiliationRouter = Router();
-// requireRole(["ADMIN"]) also admits SUPER_ADMIN. Startup-level admins are
-// not platform admins and never pass this.
-adminAffiliationRouter.use(requireAuth, requireRole(["ADMIN"]));
-
-adminAffiliationRouter.get("/overview", async (_req, res) => {
-  ok(res, await affiliation.platformOverview());
-});
-
 // ── Startup admin: mounted into the tenant workspace router ──────────────
 export const approveBody = z.object({
   designation: optionalText(120),
@@ -103,3 +94,80 @@ export const approveBody = z.object({
 });
 export const reasonBody = (field: "reason" | "message", label: string) =>
   z.object({ [field]: z.string().trim().min(3, `${label} (at least 3 characters)`).max(1000) });
+
+// ── Platform admin: /api/admin/affiliations ──────────────────────────────
+export const adminAffiliationRouter = Router();
+// requireRole(["ADMIN"]) also admits SUPER_ADMIN. Startup-level admins are
+// not platform admins and never pass this.
+adminAffiliationRouter.use(requireAuth, requireRole(["ADMIN"]));
+
+adminAffiliationRouter.get("/overview", async (_req, res) => {
+  ok(res, await affiliation.platformOverview());
+});
+
+/**
+ * Join requests across all startups. DevUp admins review them with exactly the
+ * same rules as a startup's own HR (same service calls, same checks, same
+ * offer letter and audit trail); the request's own startup is the tenant.
+ */
+adminAffiliationRouter.get(
+  "/requests",
+  validate(
+    z.object({
+      query: z.object({
+        status: z.string().optional(),
+        startup: z.string().regex(/^[A-Za-z0-9]{2,5}$/).optional(),
+      }),
+    })
+  ),
+  async (req, res) => {
+    ok(res, await affiliation.listAllRequests({ status: req.query.status as string | undefined, startupCode: req.query.startup as string | undefined }));
+  }
+);
+
+adminAffiliationRouter.get("/requests/:id", validate(z.object({ params: z.object({ id }) })), async (req, res) => {
+  const startup = await affiliation.requestStartup(req.params.id as string);
+  ok(res, { ...(await affiliation.getRequest(startup.id, req.params.id as string)), startup });
+});
+
+adminAffiliationRouter.post(
+  "/requests/:id/approve",
+  validate(z.object({ params: z.object({ id }), body: approveBody })),
+  async (req, res) => {
+    const startup = await affiliation.requestStartup(req.params.id as string);
+    ok(
+      res,
+      await affiliation.approveRequest({
+        ...req.body,
+        startupId: startup.id,
+        startupCode: startup.code ?? "GEN",
+        requestId: req.params.id as string,
+        actorId: req.user!.id,
+      })
+    );
+  }
+);
+
+adminAffiliationRouter.post(
+  "/requests/:id/reject",
+  validate(z.object({ params: z.object({ id }), body: reasonBody("reason", "Give a reason") })),
+  async (req, res) => {
+    const startup = await affiliation.requestStartup(req.params.id as string);
+    ok(res, await affiliation.rejectRequest({ startupId: startup.id, requestId: req.params.id as string, actorId: req.user!.id, reason: req.body.reason }));
+  }
+);
+
+adminAffiliationRouter.post(
+  "/requests/:id/request-info",
+  validate(z.object({ params: z.object({ id }), body: reasonBody("message", "Say what you need") })),
+  async (req, res) => {
+    const startup = await affiliation.requestStartup(req.params.id as string);
+    ok(res, await affiliation.requestMoreInfo({ startupId: startup.id, requestId: req.params.id as string, actorId: req.user!.id, message: req.body.message }));
+  }
+);
+
+adminAffiliationRouter.post("/requests/:id/offer", validate(z.object({ params: z.object({ id }) })), async (req, res) => {
+  const startup = await affiliation.requestStartup(req.params.id as string);
+  const result = await offerLetters.retryOfferLetter({ startupId: startup.id, requestId: req.params.id as string, actorId: req.user!.id });
+  ok(res, { ...result, message: offerLetters.offerReasonText(result.error) });
+});

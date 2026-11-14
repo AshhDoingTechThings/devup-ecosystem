@@ -547,6 +547,70 @@ export async function listRequests(startupId: string, status?: string) {
   };
 }
 
+/**
+ * Platform admin view: join requests across every startup, newest first.
+ * Same filters as a startup's own list, plus an optional startup code.
+ */
+export async function listAllRequests(opts: { status?: string; startupCode?: string }) {
+  const where: Prisma.StartupJoinRequestWhereInput = {};
+  const { status, startupCode } = opts;
+  if (status === "OPEN") where.status = { in: OPEN_STATUSES };
+  else if (status && status !== "ALL") {
+    if (!Object.values(JoinRequestStatus).includes(status as JoinRequestStatus)) {
+      throw new AppError(400, "Unknown status filter", "INVALID_FILTER");
+    }
+    where.status = status as JoinRequestStatus;
+  } else if (!status) where.status = { not: "CANCELLED" };
+  if (startupCode) where.startup = { code: startupCode.toUpperCase() };
+
+  const [items, counts] = await Promise.all([
+    prisma.startupJoinRequest.findMany({
+      where,
+      orderBy: { submittedAt: "desc" },
+      take: 500,
+      include: {
+        user: { select: { emailVerifiedAt: true, avatarUrl: true } },
+        reviewedBy: { select: { profile: { select: { name: true } } } },
+        startup: { select: { id: true, name: true, code: true, logoUrl: true } },
+      },
+    }),
+    prisma.startupJoinRequest.groupBy({ by: ["status"], _count: { _all: true } }),
+  ]);
+
+  return {
+    counts: Object.fromEntries(counts.map((c) => [c.status, c._count._all])) as Partial<Record<JoinRequestStatus, number>>,
+    items: items.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      status: r.status,
+      fullName: r.fullName,
+      email: r.email,
+      emailVerified: Boolean(r.user.emailVerifiedAt),
+      avatarUrl: r.user.avatarUrl,
+      designation: r.designation,
+      department: r.department,
+      college: r.college,
+      submittedAt: r.submittedAt,
+      reviewedAt: r.reviewedAt,
+      reviewedBy: r.reviewedBy?.profile?.name ?? null,
+      reviewNote: r.reviewNote,
+      offerStatus: r.offerStatus,
+      offerError: r.offerError,
+      startup: r.startup,
+    })),
+  };
+}
+
+/** Which startup a request belongs to — how platform-admin actions find their tenant. */
+export async function requestStartup(requestId: string) {
+  const r = await prisma.startupJoinRequest.findUnique({
+    where: { id: requestId },
+    select: { startup: { select: { id: true, name: true, code: true, logoUrl: true } } },
+  });
+  if (!r) throw new AppError(404, "Request not found", "NOT_FOUND");
+  return r.startup;
+}
+
 export async function getRequest(startupId: string, requestId: string) {
   const r = await prisma.startupJoinRequest.findFirst({
     where: { id: requestId, startupId },

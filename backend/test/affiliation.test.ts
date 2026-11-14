@@ -474,5 +474,70 @@ if (!DB) {
       assert.equal(await h.prisma.employee.count({ where: { startupId: yarnia.id, userId: p.id } }), 1);
       assert.equal(await h.prisma.startupMember.count({ where: { startupId: yarnia.id, userId: p.id } }), 1);
     });
+
+    test("admin portal: DevUp admins list every startup's requests and approve, reject or ask for info", async () => {
+      const a = await h.person("adm-a");
+      const b = await h.person("adm-b");
+      const c = await h.person("adm-c");
+      const ra = (await ask(a, zappy.id, "EMPLOYEE")).body.data.id;
+      const rb = (await ask(b, yarnia.id, "INTERN")).body.data.id;
+      const rc = (await ask(c, elunora.id, "EMPLOYEE")).body.data.id;
+
+      // Only platform admins.
+      for (const who of [zFounder, zHr, a]) {
+        assert.equal((await h.call("GET", "/api/admin/affiliations/requests", who.token)).status, 403, `${who.email} reached the admin list`);
+        assert.equal((await h.call("POST", `/api/admin/affiliations/requests/${ra}/approve`, who.token, {})).status, 403);
+      }
+      assert.equal((await h.call("GET", "/api/admin/affiliations/requests", "")).status, 401);
+
+      // Every startup's requests, with the startup named; filters work.
+      const all = await h.call("GET", "/api/admin/affiliations/requests?status=PENDING", platformAdmin.token);
+      assert.equal(all.status, 200, JSON.stringify(all.body));
+      const ids = all.body.data.items.map((i: any) => i.id);
+      for (const id of [ra, rb, rc]) assert.ok(ids.includes(id), "missing a startup's request");
+      const rowB = all.body.data.items.find((i: any) => i.id === rb);
+      assert.equal(rowB.startup.code, yarnia.code);
+      assert.equal(rowB.startup.name, "Yarnia Kroshay");
+      assert.ok(all.body.data.counts.PENDING >= 3);
+      const onlyZappy = await h.call("GET", `/api/admin/affiliations/requests?status=ALL&startup=${zappy.code}`, superAdmin.token);
+      assert.ok(onlyZappy.body.data.items.every((i: any) => i.startup.code === zappy.code));
+      assert.equal((await h.call("GET", "/api/admin/affiliations/requests?status=NOPE", platformAdmin.token)).status, 400);
+
+      // Detail carries the startup and the same review data HR sees.
+      const detail = await h.call("GET", `/api/admin/affiliations/requests/${rb}`, platformAdmin.token);
+      assert.equal(detail.status, 200);
+      assert.equal(detail.body.data.startup.id, yarnia.id);
+      assert.equal(detail.body.data.kind, "INTERN");
+      assert.equal((await h.call("GET", `/api/admin/affiliations/requests/${randomUUID()}`, platformAdmin.token)).status, 404);
+
+      // Approve (not a member of Yarnia): the same path as the startup's own approval.
+      const ok1 = await h.call("POST", `/api/admin/affiliations/requests/${rb}/approve`, platformAdmin.token, { designation: "Design Intern", issueOfferLetter: false });
+      assert.equal(ok1.status, 200, JSON.stringify(ok1.body));
+      assert.equal(await h.prisma.intern.count({ where: { startupId: yarnia.id, userId: b.id } }), 1);
+      const seatB = await h.prisma.startupMember.findFirst({ where: { startupId: yarnia.id, userId: b.id } });
+      assert.equal(seatB?.status, "ACTIVE");
+      assert.equal(seatB?.role, "INTERN");
+      // Visible to the startup's own HR as approved, by the admin.
+      const yList = await h.call("GET", w(yarnia, "/join-requests?status=APPROVED"), yFounder.token);
+      assert.ok(yList.body.data.items.some((i: any) => i.id === rb));
+      const log = await h.prisma.auditLog.findFirst({ where: { entity: "StartupJoinRequest", entityId: rb, action: "affiliation.approved" } });
+      assert.equal(log?.adminId, platformAdmin.id, "audit names the DevUp admin");
+      // Approving again changes nothing.
+      const again = await h.call("POST", `/api/admin/affiliations/requests/${rb}/approve`, platformAdmin.token, {});
+      assert.equal(again.status, 200);
+      assert.equal(await h.prisma.intern.count({ where: { startupId: yarnia.id, userId: b.id } }), 1);
+
+      // Ask for info, then reject — with reasons, and closed requests stay closed.
+      const info = await h.call("POST", `/api/admin/affiliations/requests/${rc}/request-info`, superAdmin.token, { message: "Which team are you in?" });
+      assert.equal(info.status, 200, JSON.stringify(info.body));
+      assert.equal((await h.call("POST", `/api/admin/affiliations/requests/${ra}/reject`, platformAdmin.token, { reason: "x" })).status, 400, "reason too short");
+      const rej = await h.call("POST", `/api/admin/affiliations/requests/${ra}/reject`, platformAdmin.token, { reason: "Not on the team list" });
+      assert.equal(rej.status, 200);
+      assert.equal((await h.call("POST", `/api/admin/affiliations/requests/${ra}/approve`, platformAdmin.token, {})).status, 409);
+      assert.equal(await h.prisma.employee.count({ where: { startupId: zappy.id, userId: a.id } }), 0);
+      const aView = await entry(a, zappy);
+      assert.equal(aView.status, "REJECTED");
+      assert.equal(aView.reviewNote, "Not on the team list");
+    });
   });
 }

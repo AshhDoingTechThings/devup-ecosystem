@@ -7,6 +7,7 @@ import Login from '@/pages/Login'
 import Dashboard from '@/pages/Dashboard'
 import Applications from '@/pages/Applications'
 import LeadApplications from '@/pages/LeadApplications'
+import WorkspaceRequests from '@/pages/WorkspaceRequests'
 import Startups from '@/pages/Startups'
 import UsersPage from '@/pages/Users'
 import Jobs from '@/pages/Jobs'
@@ -62,6 +63,7 @@ export default function App() {
             <Route index element={<Dashboard />} />
             <Route path="applications" element={<Applications />} />
             <Route path="lead-applications" element={<LeadApplications />} />
+            <Route path="workspace-requests" element={<WorkspaceRequests />} />
             <Route path="startups" element={<Startups />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="jobs" element={<Jobs />} />
