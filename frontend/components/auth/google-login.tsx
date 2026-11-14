@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import { pingBackend } from '@/lib/keepAlive'
 import { motion } from 'framer-motion'
 
 /**
@@ -22,7 +23,10 @@ interface SocialLoginProps {
 }
 
 const PROVIDER_OPTIONS: Record<Provider, Record<string, unknown>> = {
-  google: { queryParams: { access_type: 'offline', prompt: 'consent' } },
+  // Account picker, not a forced consent screen: prompt=consent made Google
+  // ask for permission again on every single sign-in, and nothing here uses
+  // Google's offline refresh tokens that it exists to obtain.
+  google: { queryParams: { prompt: 'select_account' } },
   github: { scopes: 'read:user user:email' },
   linkedin_oidc: { scopes: 'openid profile email' },
 }
@@ -67,6 +71,9 @@ export default function GoogleLogin({ redirectTo, className }: SocialLoginProps)
     if (pending) return
     setPending(provider)
     setError('')
+    // Wake the API now: a cold start then overlaps the time spent on Google's
+    // pages instead of being added after the redirect back. Fire and forget.
+    void pingBackend()
 
     try {
       const supabase = createClient()

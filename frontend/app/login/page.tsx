@@ -1,4 +1,5 @@
 'use client'
+import { safeRedirect } from '@/lib/utils'
 import { useState } from 'react'
 import { useAuth } from '@/lib/auth/AuthProvider'
 import { useSearchParams } from 'next/navigation'
@@ -17,14 +18,14 @@ function LoginContent() {
   const [loading, setLoading] = useState(false)
   const { signIn } = useAuth()
   const searchParams = useSearchParams()
-  const redirect = searchParams.get('redirect') || '/dashboard'
+  const redirect = safeRedirect(searchParams.get('redirect'))
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
     setLoading(true)
     
-    const result = await signIn(email, password)
+    const result = await signIn(email, password, redirect)
     
     if (result.error) {
       setError(result.error)
