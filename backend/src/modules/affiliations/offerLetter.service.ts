@@ -102,14 +102,7 @@ export async function deliverOfferLetter(requestId: string, actorId: string): Pr
   const isIntern = req.kind === "INTERN";
   const person = isIntern ? req.intern : req.employee;
   if (!person) return finish("FAILED", "NO_RECORD", null);
-
-  const supervisorId = isIntern ? req.intern?.mentorId : req.employee?.managerId;
-  const supervisor = supervisorId
-    ? await prisma.user.findUnique({ where: { id: supervisorId }, select: { profile: { select: { name: true } } } })
-    : null;
-  const terms = (req.offerTerms ?? {}) as { workMode?: string; location?: string };
-  const start = isIntern ? req.intern!.startDate : req.employee!.joinedAt;
-  const end = isIntern ? req.intern!.endDate : null;
+  const { payload, start, supervisorName, terms } = await offerPayload(req);
 
   // 1. The document — issued once. A retry finds it linked and reuses it.
   let doc = req.offerDocument;
@@ -126,23 +119,7 @@ export async function deliverOfferLetter(requestId: string, actorId: string): Pr
             internId: isIntern ? person.id : undefined,
             employeeId: isIntern ? undefined : person.id,
             issuedBy: actorId,
-            payload: {
-              candidateName: person.fullName,
-              designation: person.designation,
-              department: person.department,
-              employmentType: isIntern ? "INTERNSHIP" : req.employee!.employmentType,
-              ctc: isIntern ? undefined : req.employee!.ctc,
-              stipend: isIntern ? req.intern!.stipend : undefined,
-              joiningDate: start,
-              expiresAt: offerExpiryFor(start),
-              documentsDueBy: offerExpiryFor(start),
-              durationMonths: end
-                ? Math.max(1, Math.round((end.getTime() - start.getTime()) / (30 * 864e5)))
-                : undefined,
-              workMode: terms.workMode ?? "OFFICE",
-              location: terms.location,
-              reportingTo: supervisor?.profile?.name,
-            },
+            payload,
           },
           tx
         );
@@ -168,11 +145,16 @@ export async function deliverOfferLetter(requestId: string, actorId: string): Pr
   if (!file.stored) return finish("FAILED", "STORAGE_FAILED", doc.documentNo);
 
   // 3. The email — to the account's own verified address, PDF attached.
+  const replaces = doc.supersedesId
+    ? (await prisma.hrDocument.findUnique({ where: { id: doc.supersedesId }, select: { documentNo: true } }))?.documentNo ?? null
+    : null;
   const outcome = await notify({
     userId: req.userId,
     event: "OFFER_GENERATED",
-    title: `Your ${isIntern ? "internship " : ""}offer letter — ${req.startup.name}`,
-    message: `${req.startup.name} has issued your offer letter (${doc.documentNo}).`,
+    title: `Your ${replaces ? "revised " : ""}${isIntern ? "internship " : ""}offer letter — ${req.startup.name}`,
+    message: replaces
+      ? `${req.startup.name} has issued a revised offer letter (${doc.documentNo}). It replaces ${replaces}.`
+      : `${req.startup.name} has issued your offer letter (${doc.documentNo}).`,
     link: isIntern ? `/dashboard/internship?startup=${req.startup.code}` : `/dashboard/employment?startup=${req.startup.code}`,
     html: Emails.offerGenerated({
       name: person.fullName,
@@ -184,14 +166,173 @@ export async function deliverOfferLetter(requestId: string, actorId: string): Pr
       ctc: isIntern ? undefined : req.employee!.ctc,
       stipend: isIntern ? req.intern!.stipend : undefined,
       logoUrl: req.startup.logoUrl,
-      reportingTo: supervisor?.profile?.name ?? null,
+      reportingTo: supervisorName,
       workLocation: terms.location ?? null,
+      replaces,
     }),
     attachments: [{ filename: `Offer-Letter-${doc.documentNo.replace(/\//g, "-")}.pdf`, content: file.pdfBuffer }],
   });
 
   if (outcome.email === "sent" || outcome.email === "queued") return finish("SENT", null, doc.documentNo);
   return finish("FAILED", `EMAIL_${outcome.error ?? "FAILED"}`.slice(0, 80), doc.documentNo);
+}
+
+type RequestWithPeople = Prisma.StartupJoinRequestGetPayload<{
+  include: { intern: true; employee: true; startup: { select: { id: true; name: true; code: true; logoUrl: true } } };
+}>;
+
+/** What the letter says, from the person's record as it is now. */
+async function offerPayload(req: RequestWithPeople) {
+  const isIntern = req.kind === "INTERN";
+  const person = (isIntern ? req.intern : req.employee)!;
+  const supervisorId = isIntern ? req.intern?.mentorId : req.employee?.managerId;
+  const supervisor = supervisorId
+    ? await prisma.user.findUnique({ where: { id: supervisorId }, select: { profile: { select: { name: true } } } })
+    : null;
+  const terms = (req.offerTerms ?? {}) as { workMode?: string; location?: string };
+  const start = isIntern ? req.intern!.startDate : req.employee!.joinedAt;
+  const end = isIntern ? req.intern!.endDate : null;
+  return {
+    start,
+    terms,
+    supervisorName: supervisor?.profile?.name ?? null,
+    payload: {
+      candidateName: person.fullName,
+      designation: person.designation,
+      department: person.department,
+      employmentType: isIntern ? "INTERNSHIP" : req.employee!.employmentType,
+      ctc: isIntern ? undefined : req.employee!.ctc,
+      stipend: isIntern ? req.intern!.stipend : undefined,
+      joiningDate: start,
+      expiresAt: offerExpiryFor(start),
+      documentsDueBy: offerExpiryFor(start),
+      durationMonths: end ? Math.max(1, Math.round((end.getTime() - start.getTime()) / (30 * 864e5))) : undefined,
+      workMode: terms.workMode ?? "OFFICE",
+      location: terms.location,
+      reportingTo: supervisor?.profile?.name,
+    } as Record<string, unknown>,
+  };
+}
+
+/** Record fields that appear on the offer letter. Editing one of these regenerates it. */
+export const LETTER_FIELDS = [
+  "fullName", "designation", "department", "employmentType", "ctc", "stipend",
+  "startDate", "endDate", "joinedAt", "mentorId", "managerId",
+] as const;
+
+export type RegenerateResult =
+  | { regenerated: true; requestId: string; documentNo: string; previousDocumentNo: string; ready: boolean; error: string | null; message: string | null }
+  | { regenerated: false; requestId: string | null; reason: "NO_LETTER" | "SENDING" | "FAILED"; message: string | null };
+
+/**
+ * After a person's details change, issue a revised offer letter from the
+ * record as it is now. Issued letters are frozen legal records, so the old one
+ * is not rewritten: it is revoked (kept, marked superseded) and a new letter
+ * with its own number replaces it on the request. Nothing is emailed here;
+ * the revised letter waits as "ready to send" until an admin sends it.
+ *
+ * Never throws: the edit that triggered this has already been saved.
+ */
+export async function regenerateOfferLetter(personId: string, startupId: string, actorId: string): Promise<RegenerateResult> {
+  const found = await prisma.startupJoinRequest.findFirst({
+    where: { startupId, status: "APPROVED", offerDocumentId: { not: null }, OR: [{ internId: personId }, { employeeId: personId }] },
+    orderBy: { reviewedAt: "desc" },
+    select: { id: true },
+  });
+  if (!found) return { regenerated: false, requestId: null, reason: "NO_LETTER", message: null };
+
+  // Same lock the sender uses, so a letter is never replaced mid-send.
+  const stale = new Date(Date.now() - STALE_SENDING_MS);
+  const claimed = await prisma.startupJoinRequest.updateMany({
+    where: {
+      id: found.id,
+      OR: [{ offerStatus: null }, { offerStatus: { in: ["FAILED", "SENT"] } }, { offerStatus: "SENDING", updatedAt: { lt: stale } }],
+    },
+    data: { offerStatus: "SENDING" },
+  });
+  if (claimed.count !== 1) {
+    return { regenerated: false, requestId: found.id, reason: "SENDING", message: "The offer letter is being sent right now, so it was not regenerated. Edit again once it finishes." };
+  }
+
+  const req = await prisma.startupJoinRequest.findUniqueOrThrow({
+    where: { id: found.id },
+    include: { intern: true, employee: true, offerDocument: true, startup: { select: { id: true, name: true, code: true, logoUrl: true } } },
+  });
+  const old = req.offerDocument!;
+  const restore = () =>
+    prisma.startupJoinRequest.update({
+      where: { id: req.id },
+      data: { offerStatus: req.offerStatus === "SENDING" ? "FAILED" : req.offerStatus },
+    });
+
+  if (!(req.kind === "INTERN" ? req.intern : req.employee)) {
+    await restore();
+    return { regenerated: false, requestId: req.id, reason: "FAILED", message: offerReasonText("NO_RECORD") };
+  }
+
+  let doc: Awaited<ReturnType<typeof issue>>;
+  try {
+    const { payload } = await offerPayload(req);
+    doc = await prisma.$transaction(async (tx) => {
+      const documentNo = await nextOfferNo(tx, req.startupId, req.startup.code ?? "GEN");
+      const created = await issue(
+        {
+          startupId: req.startupId,
+          docType: "OFFER_LETTER",
+          documentNo,
+          templateKey: "OFFER_LETTER",
+          internId: req.kind === "INTERN" ? req.intern!.id : undefined,
+          employeeId: req.kind === "INTERN" ? undefined : req.employee!.id,
+          issuedBy: actorId,
+          supersedesId: old.id,
+          payload,
+        },
+        tx
+      );
+      if (!old.revokedAt) {
+        await tx.hrDocument.update({
+          where: { id: old.id },
+          data: { revokedAt: new Date(), revokeReason: `Superseded by ${documentNo} after the details were edited` },
+        });
+      }
+      // Ready to send: a letter is linked, none of it has been emailed yet.
+      await tx.startupJoinRequest.update({
+        where: { id: req.id },
+        data: { offerDocumentId: created.id, offerStatus: null, offerError: null, offerSentAt: null },
+      });
+      return created;
+    });
+  } catch (err) {
+    const code = err instanceof AppError && err.code === "BRANDING_MISSING" ? "BRANDING_MISSING" : "ISSUE_FAILED";
+    if (code === "ISSUE_FAILED") logger.error(`offer letter regenerate failed for request ${req.id}: ${(err as Error).message}`);
+    await restore();
+    return { regenerated: false, requestId: req.id, reason: "FAILED", message: offerReasonText(code) };
+  }
+
+  // The file. If it can't be rendered or stored now, the revised letter is
+  // still the one on record; sending retries the file before emailing.
+  const file = await attachFile({ id: doc.id, docType: doc.docType, startupId: doc.startupId, documentNo: doc.documentNo }, doc.html);
+  const error = !file.pdfBuffer ? "PDF_UNAVAILABLE" : !file.stored ? "STORAGE_FAILED" : null;
+  if (error) await prisma.startupJoinRequest.update({ where: { id: req.id }, data: { offerStatus: "FAILED", offerError: error } });
+
+  await audit({
+    action: "affiliation.offer_regenerated",
+    entity: "StartupJoinRequest",
+    entityId: req.id,
+    actorId,
+    startupId: req.startupId,
+    metadata: { documentNo: doc.documentNo, replaces: old.documentNo, message: `${doc.documentNo} replaces ${old.documentNo}` },
+  }).catch(() => undefined);
+
+  return {
+    regenerated: true,
+    requestId: req.id,
+    documentNo: doc.documentNo,
+    previousDocumentNo: old.documentNo,
+    ready: !error,
+    error,
+    message: error ? offerReasonText(error) : null,
+  };
 }
 
 /**

@@ -213,13 +213,17 @@ export const Emails = {
     documentsChecklist?: string[];
     reportingTo?: string | null;
     workLocation?: string | null;
+    /** Number of the letter this one replaces, for a revised letter. */
+    replaces?: string | null;
   }) =>
     renderEmail({
-      heading: "Your offer letter is ready",
+      heading: args.replaces ? "Your revised offer letter" : "Your offer letter is ready",
       preheader: `${args.startupName} — ${args.designation}. Respond by ${args.expiresAt}.`,
       body:
         p(`Hi ${args.name},`) +
-        p(`Congratulations. ${args.startupName} has issued your offer for the ${args.designation} role.`) +
+        (args.replaces
+          ? p(`${args.startupName} has updated your offer for the ${args.designation} role. This revised letter replaces ${args.replaces}, which is no longer valid.`)
+          : p(`Congratulations. ${args.startupName} has issued your offer for the ${args.designation} role.`)) +
         details([
           ["Position", args.designation],
           ["Offer number", args.offerNo],

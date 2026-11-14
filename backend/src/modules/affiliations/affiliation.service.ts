@@ -541,7 +541,7 @@ export async function listRequests(startupId: string, status?: string) {
       reviewedBy: r.reviewedBy?.profile?.name ?? null,
       reviewNote: r.reviewNote,
       personId: r.employeeId ?? r.internId,
-      offerStatus: r.offerStatus,
+      offerStatus: r.offerStatus ?? (r.offerDocumentId ? "READY" : null),
       offerError: r.offerError,
     })),
   };
@@ -594,7 +594,7 @@ export async function listAllRequests(opts: { status?: string; startupCode?: str
       reviewedAt: r.reviewedAt,
       reviewedBy: r.reviewedBy?.profile?.name ?? null,
       reviewNote: r.reviewNote,
-      offerStatus: r.offerStatus,
+      offerStatus: r.offerStatus ?? (r.offerDocumentId ? "READY" : null),
       offerError: r.offerError,
       startup: r.startup,
     })),
@@ -681,7 +681,8 @@ export async function getRequest(startupId: string, requestId: string) {
     person,
     offer: r.offerStatus || r.offerDocument
       ? {
-          status: r.offerStatus,
+          // READY: a letter is generated (e.g. revised after an edit) but not emailed yet.
+          status: r.offerStatus ?? "READY",
           documentNo: r.offerDocument?.documentNo ?? null,
           issuedAt: r.offerDocument?.issuedAt ?? null,
           revoked: Boolean(r.offerDocument?.revokedAt),

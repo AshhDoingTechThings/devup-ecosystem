@@ -567,6 +567,8 @@ const personEditBody = z.object({
   ctc: optText(120),
   employmentType: z.enum(["INTERNSHIP", "FULL_TIME", "PART_TIME", "CONTRACT"]).optional(),
   joinedAt: dateStr,
+  workMode: z.enum(["OFFICE", "HYBRID", "REMOTE"]).optional(),
+  location: optText(200),
 });
 
 router.patch(

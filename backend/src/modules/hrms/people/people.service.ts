@@ -3,6 +3,19 @@ import { AppError } from "../../../middleware/errorHandler";
 import { audit } from "../../shared/audit.service";
 import { getChecklist } from "../onboarding/onboarding.service";
 import { fileLink } from "../documents/documentFiles";
+import { LETTER_FIELDS, regenerateOfferLetter, STALE_SENDING_MS } from "../../affiliations/offerLetter.service";
+
+/** The offer letter from their join request, if one was issued. */
+async function letterRequest(startupId: string, personId: string) {
+  return prisma.startupJoinRequest.findFirst({
+    where: { startupId, status: "APPROVED", offerDocumentId: { not: null }, OR: [{ internId: personId }, { employeeId: personId }] },
+    orderBy: { reviewedAt: "desc" },
+    select: {
+      id: true, offerStatus: true, offerSentAt: true, offerError: true, offerTerms: true, updatedAt: true,
+      offerDocument: { select: { documentNo: true } },
+    },
+  });
+}
 
 /**
  * Everything about one person in a startup: their record, their onboarding
@@ -94,6 +107,22 @@ export async function getPerson(startupId: string, personId: string, opts: { can
 
     /** Who can be picked as their mentor/manager when editing. */
     supervisors: await supervisorOptions(startupId),
+
+    /** Their offer letter from the join request: what it is and whether it went out. */
+    offerLetter: await letterRequest(startupId, personId).then((r) => {
+      if (!r) return null;
+      const terms = (r.offerTerms ?? {}) as { workMode?: string; location?: string };
+      return {
+        requestId: r.id,
+        documentNo: r.offerDocument?.documentNo ?? null,
+        /** READY = generated, not emailed yet. */
+        status: r.offerStatus ?? "READY",
+        stuck: r.offerStatus === "SENDING" && Date.now() - r.updatedAt.getTime() > STALE_SENDING_MS,
+        sentAt: r.offerSentAt,
+        workMode: terms.workMode ?? "OFFICE",
+        location: terms.location ?? null,
+      };
+    }),
 
     /** Where they came from — null for a direct hire. */
     application: p.application
@@ -223,13 +252,16 @@ export interface PersonEdit {
   ctc?: string | null;
   employmentType?: "INTERNSHIP" | "FULL_TIME" | "PART_TIME" | "CONTRACT";
   joinedAt?: string;
+  // Offer letter terms (kept on the join request; only when a letter exists)
+  workMode?: "OFFICE" | "HYBRID" | "REMOTE";
+  location?: string | null;
 }
 
 const LABELS: Record<string, string> = {
   fullName: "name", phone: "phone", designation: "designation", department: "department",
   college: "college", stipend: "stipend", stipendAmount: "monthly stipend", startDate: "start date",
   endDate: "end date", ctc: "CTC", employmentType: "employment type", joinedAt: "joining date",
-  mentorId: "mentor", managerId: "manager",
+  mentorId: "mentor", managerId: "manager", workMode: "work mode", location: "work location",
 };
 
 function dateOrThrow(v: string, field: string) {
@@ -302,11 +334,35 @@ export async function updatePerson(args: {
       ? new Date(a as any).getTime() === new Date(b as any).getTime()
       : (a ?? null) === (b ?? null);
   const changed = Object.keys(data).filter((k) => !same(data[k], before[k]));
-  if (changed.length === 0) return getPerson(args.startupId, args.personId);
 
-  const patch = Object.fromEntries(changed.map((k) => [k, data[k]]));
-  if (employee) await prisma.employee.update({ where: { id: employee.id }, data: patch });
-  else await prisma.intern.update({ where: { id: intern!.id }, data: patch });
+  // Work mode and location only exist on the offer letter's terms.
+  let termsUpdate: { requestId: string; terms: Record<string, unknown> } | null = null;
+  if (d.workMode !== undefined || d.location !== undefined) {
+    const req = await letterRequest(args.startupId, args.personId);
+    if (req) {
+      const terms = { ...((req.offerTerms ?? {}) as Record<string, unknown>) };
+      if (d.workMode !== undefined && d.workMode !== (terms.workMode ?? "OFFICE")) {
+        terms.workMode = d.workMode;
+        changed.push("workMode");
+      }
+      const loc = optText(d.location);
+      if (loc !== undefined && loc !== (terms.location ?? null)) {
+        terms.location = loc;
+        changed.push("location");
+      }
+      if (changed.includes("workMode") || changed.includes("location")) termsUpdate = { requestId: req.id, terms };
+    }
+  }
+  if (changed.length === 0) return { ...(await getPerson(args.startupId, args.personId)), letter: null };
+
+  const patch = Object.fromEntries(changed.filter((k) => k in data).map((k) => [k, data[k]]));
+  if (Object.keys(patch).length) {
+    if (employee) await prisma.employee.update({ where: { id: employee.id }, data: patch });
+    else await prisma.intern.update({ where: { id: intern!.id }, data: patch });
+  }
+  if (termsUpdate) {
+    await prisma.startupJoinRequest.update({ where: { id: termsUpdate.requestId }, data: { offerTerms: termsUpdate.terms as any } });
+  }
 
   await audit({
     action: "hrms.person_updated",
@@ -317,5 +373,9 @@ export async function updatePerson(args: {
     metadata: { fields: changed, message: `Changed ${changed.map((k) => LABELS[k] ?? k).join(", ")}` },
   });
 
-  return getPerson(args.startupId, args.personId);
+  // Anything printed on their offer letter changed → issue the revised letter now.
+  const onLetter = changed.some((k) => (LETTER_FIELDS as readonly string[]).includes(k) || k === "workMode" || k === "location");
+  const letter = onLetter ? await regenerateOfferLetter(args.personId, args.startupId, args.actorId) : null;
+
+  return { ...(await getPerson(args.startupId, args.personId)), letter };
 }

@@ -1,13 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { CheckCircle2, FileText, X } from "lucide-react";
 import { workspaceApi } from "@/lib/api/workspace";
+import { joinRequestAdminApi } from "@/lib/api/affiliation";
 
 /**
  * Edit an employee's or intern's record: name, contact, role, dates, pay and
  * mentor/manager. Email stays fixed: it links the record to their DevUp
  * account and workspace seat. Saving sends only the fields that changed.
+ *
+ * If they have an offer letter and a detail printed on it changed, the server
+ * issues a revised letter (new number, old one superseded). The dialog then
+ * shows it and offers to email it — nothing is sent without that click.
  */
 export default function EditPersonDialog({
   code,
@@ -25,6 +30,9 @@ export default function EditPersonDialog({
   const [initial, setInitial] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Saved record, kept while the letter step is shown. */
+  const [result, setResult] = useState<any>(null);
+  const [send, setSend] = useState<null | { status: "SENT" | "FAILED"; text: string }>(null);
 
   useEffect(() => {
     workspaceApi
@@ -39,10 +47,13 @@ export default function EditPersonDialog({
   }, [code, personId]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !busy && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !busy && close();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, busy]);
+  });
+
+  // Once saved, closing always hands back the saved record so the page refreshes.
+  const close = () => (result ? onSaved(result) : onClose());
 
   const isIntern = p?.kind === "INTERN";
   const set = (k: string) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -68,12 +79,81 @@ export default function EditPersonDialog({
     setBusy(true);
     try {
       const updated = await workspaceApi.updatePerson(code, personId, body);
-      onSaved(updated);
+      if (updated.letter) {
+        setResult(updated);
+        setBusy(false);
+      } else onSaved(updated);
     } catch (e: any) {
       setError(e.status === 403 ? "Only HR, admins and founders can edit team records." : e.message || "Could not save.");
       setBusy(false);
     }
   };
+
+  const letter = result?.letter;
+  const sendLetter = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await joinRequestAdminApi.retryOffer(code, letter.requestId);
+      if (r.status === "SENT") setResult({ ...result, letterSent: true });
+      setSend(r.status === "SENT"
+        ? { status: "SENT", text: `${r.documentNo} was emailed to ${result.email} with the PDF attached.` }
+        : { status: "FAILED", text: r.message || "The letter could not be sent. Try again shortly." });
+    } catch (e: any) {
+      setSend({ status: "FAILED", text: e.message || "The letter could not be sent." });
+    }
+    setBusy(false);
+  };
+
+  if (result) {
+    const canSend = letter.regenerated && send?.status !== "SENT";
+    return (
+      <div className="fixed inset-0 z-[130] flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-labelledby="edit-person-title">
+        <button className="absolute inset-0 bg-black/70" aria-label="Close" onClick={() => !busy && close()} />
+        <div className="relative w-full max-w-xl rounded-t-2xl border border-white/10 bg-[#0d0d0d] shadow-2xl sm:rounded-2xl">
+          <header className="flex items-start justify-between gap-3 border-b border-white/[0.06] px-5 py-4">
+            <h2 id="edit-person-title" className="text-white" style={{ fontSize: 18, lineHeight: 1.2, fontWeight: 700, fontFamily: "var(--font-syne), sans-serif" }}>
+              Details saved
+            </h2>
+            <button onClick={close} disabled={busy} className="rounded-lg p-1.5 text-[#8b8b8b] hover:bg-white/5 hover:text-white" aria-label="Close">
+              <X className="h-5 w-5" />
+            </button>
+          </header>
+          <div className="space-y-3 px-5 py-4 text-sm text-[#c4c4c4]">
+            {letter.regenerated ? (
+              <div className="rounded-lg border border-[#c8f135]/20 bg-[#c8f135]/[0.04] p-3">
+                <div className="mb-1 flex items-center gap-2 text-white"><FileText className="h-4 w-4 text-[#c8f135]" /> Offer letter regenerated</div>
+                <div className="font-mono text-white">{letter.documentNo}</div>
+                <div className="mt-1 text-[12.5px] text-[#8b8b8b]">
+                  Replaces <span className="font-mono">{letter.previousDocumentNo}</span>, which is now marked superseded. It has not been emailed yet.
+                </div>
+                {letter.message && <div className="mt-2 text-[12.5px] text-amber-200/90">{letter.message} Sending will try the file again.</div>}
+              </div>
+            ) : (
+              <div role="alert" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[13px] text-amber-200">
+                The offer letter was not regenerated. {letter.message}
+              </div>
+            )}
+            {send && (
+              <div role="status" className={`flex items-start gap-2 rounded-lg border p-3 text-[13px] ${send.status === "SENT" ? "border-[#c8f135]/20 bg-[#c8f135]/10 text-[#c8f135]" : "border-red-500/20 bg-red-500/10 text-red-300"}`}>
+                {send.status === "SENT" && <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />} {send.text}
+              </div>
+            )}
+          </div>
+          <footer className="flex flex-col-reverse gap-2 border-t border-white/[0.06] p-4 sm:flex-row sm:items-center sm:justify-end">
+            <button onClick={close} disabled={busy} className="rounded-lg border border-white/10 px-4 py-2.5 text-sm text-[#a1a1a1] hover:bg-white/5">
+              {send?.status === "SENT" || !letter.regenerated ? "Done" : "Send later"}
+            </button>
+            {canSend && (
+              <button onClick={sendLetter} disabled={busy} className="rounded-lg bg-[#c8f135] px-4 py-2.5 text-sm font-bold text-black transition hover:brightness-110 disabled:opacity-50">
+                {busy ? "Sending…" : send?.status === "FAILED" ? "Try again" : `Email it to ${result.email}`}
+              </button>
+            )}
+          </footer>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-[130] flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-labelledby="edit-person-title">
@@ -145,8 +225,17 @@ export default function EditPersonDialog({
                   </>
                 )}
               </Group>
+              {p.offerLetter && (
+                <Group title="Offer letter">
+                  <Select label="Work mode" value={form.workMode} onChange={set("workMode")} options={[["OFFICE", "Office"], ["HYBRID", "Hybrid"], ["REMOTE", "Remote"]]} />
+                  <Field label="Work location" value={form.location} onChange={set("location")} />
+                  <div className="sm:col-span-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 text-[#8b8b8b]" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                    Current letter <span className="font-mono text-[#c4c4c4]">{p.offerLetter.documentNo}</span>. Changing anything printed on it (name, role, dates, pay, {isIntern ? "mentor" : "manager"}, work mode or location) issues a revised letter with a new number. You choose when to email it.
+                  </div>
+                </Group>
+              )}
               <p className="text-[#6b6b6b]" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
-                Letters already issued keep the details printed on them. Access is changed with Deactivate / Reactivate.
+                Access is changed with Deactivate / Reactivate.
               </p>
             </>
           )}
@@ -179,9 +268,10 @@ function toForm(p: any): Record<string, string> {
     department: p.department ?? "",
     supervisorUserId: p.managerId ?? "",
   };
+  const letter: Record<string, string> = p.offerLetter ? { workMode: p.offerLetter.workMode ?? "OFFICE", location: p.offerLetter.location ?? "" } : {};
   return p.kind === "INTERN"
-    ? { ...base, college: p.college ?? "", startDate: day(p.joinedAt), endDate: day(p.endDate), stipend: p.stipend ?? "", stipendAmount: p.stipendAmount == null ? "" : String(p.stipendAmount) }
-    : { ...base, employmentType: p.employmentType ?? "FULL_TIME", joinedAt: day(p.joinedAt), ctc: p.ctc ?? "" };
+    ? { ...letter, ...base, college: p.college ?? "", startDate: day(p.joinedAt), endDate: day(p.endDate), stipend: p.stipend ?? "", stipendAmount: p.stipendAmount == null ? "" : String(p.stipendAmount) }
+    : { ...letter, ...base, employmentType: p.employmentType ?? "FULL_TIME", joinedAt: day(p.joinedAt), ctc: p.ctc ?? "" };
 }
 
 function Group({ title, children }: { title: string; children: React.ReactNode }) {

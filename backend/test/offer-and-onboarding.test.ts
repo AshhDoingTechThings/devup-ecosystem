@@ -288,6 +288,96 @@ if (!DB) {
       assert.equal((await retry(zappy, zFounder, requestId)).status, 409, "a SENT letter is never re-sent");
     });
 
+    test("editing details on the letter regenerates it (new number, old one superseded); sending is a separate click", async () => {
+      const { person, requestId, personId } = await approvedIntern("intern-regen", zappy, zFounder);
+      const edit = (body: Record<string, unknown>, by = zFounder) => h.call("PATCH", w(zappy, `/team/${personId}`), by.token, body);
+      const detail = async () => (await h.call("GET", w(zappy, `/join-requests/${requestId}`), zFounder.token)).body.data;
+      const first = (await detail()).offer;
+      assert.equal(first.status, "SENT");
+      const sentBefore = mailsTo(person.email).length;
+
+      // A detail that isn't printed on the letter: no new letter.
+      const phone = await edit({ phone: "+91 90000 00000" });
+      assert.equal(phone.status, 200, JSON.stringify(phone.body));
+      assert.equal(phone.body.data.letter, null);
+      assert.equal((await detail()).offer.documentNo, first.documentNo);
+
+      // Designation and end date are printed on it: a revised letter, not emailed.
+      const r = await edit({ designation: "AI/ML Intern", endDate: "2027-07-31" });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const l = r.body.data.letter;
+      assert.equal(l.regenerated, true, JSON.stringify(l));
+      assert.equal(l.ready, true);
+      assert.equal(l.previousDocumentNo, first.documentNo);
+      assert.notEqual(l.documentNo, first.documentNo);
+      assert.equal(l.requestId, requestId);
+      assert.equal(r.body.data.offerLetter.status, "READY");
+      assert.equal(mailsTo(person.email).length, sentBefore, "nothing emailed on its own");
+
+      const oldDoc = await h.prisma.hrDocument.findUnique({ where: { documentNo: first.documentNo } });
+      const newDoc = await h.prisma.hrDocument.findUnique({ where: { documentNo: l.documentNo } });
+      assert.ok(oldDoc!.revokedAt, "old letter kept, marked superseded");
+      assert.match(oldDoc!.revokeReason!, new RegExp(l.documentNo.replace(/\//g, "\\/")));
+      assert.equal(newDoc!.supersedesId, oldDoc!.id);
+      assert.equal((newDoc!.payload as any).designation, "AI/ML Intern");
+      assert.ok(newDoc!.storagePath, "revised PDF stored privately");
+      assert.equal((oldDoc!.payload as any).designation, "Design Intern", "the issued letter itself is never rewritten");
+
+      let d = await detail();
+      assert.equal(d.offer.status, "READY");
+      assert.equal(d.offer.documentNo, l.documentNo);
+      assert.ok(d.history.some((e: any) => e.action === "affiliation.offer_regenerated"));
+      const list = await h.call("GET", w(zappy, "/join-requests?status=ALL"), zFounder.token);
+      assert.equal(list.body.data.items.find((i: any) => i.id === requestId).offerStatus, "READY");
+
+      // Send: one email, the revised wording, the new PDF.
+      const sent = await retry(zappy, zFounder, requestId);
+      assert.equal(sent.status, 200, JSON.stringify(sent.body));
+      assert.equal(sent.body.data.status, "SENT");
+      const mail = mailsTo(person.email).at(-1) as any;
+      assert.equal(mailsTo(person.email).length, sentBefore + 1);
+      assert.match(mail.subject, /revised/i);
+      assert.match(mail.html, new RegExp(`replaces ${first.documentNo.replace(/\//g, "\\/")}`));
+      assert.match(mail.attachments[0].filename, new RegExp(l.documentNo.replace(/\//g, "-")));
+      d = await detail();
+      assert.equal(d.offer.status, "SENT");
+      assert.equal((await retry(zappy, zFounder, requestId)).status, 409, "not sent twice");
+
+      // Work mode / location live on the letter's terms: also regenerate.
+      const wm = await edit({ workMode: "REMOTE", location: "Hyderabad" });
+      assert.equal(wm.body.data.letter.regenerated, true);
+      assert.equal(wm.body.data.letter.previousDocumentNo, l.documentNo);
+      assert.equal(wm.body.data.offerLetter.workMode, "REMOTE");
+      const third = await h.prisma.hrDocument.findUnique({ where: { documentNo: wm.body.data.letter.documentNo } });
+      assert.equal((third!.payload as any).workMode, "REMOTE");
+      assert.equal((third!.payload as any).location, "Hyderabad");
+    });
+
+    test("regeneration waits for a send in progress, and is skipped when there is no letter", async () => {
+      const { requestId, personId } = await approvedIntern("intern-busy", zappy, zFounder);
+      await h.prisma.$executeRaw`UPDATE "StartupJoinRequest" SET "offerStatus"='SENDING', "updatedAt"=(now() at time zone 'utc') WHERE id=${requestId}`;
+      const before = await h.prisma.startupJoinRequest.findUnique({ where: { id: requestId }, select: { offerDocumentId: true } });
+      const r = await h.call("PATCH", w(zappy, `/team/${personId}`), zFounder.token, { designation: "Busy Intern" });
+      assert.equal(r.status, 200);
+      assert.equal(r.body.data.designation, "Busy Intern", "the edit itself is saved");
+      assert.equal(r.body.data.letter.regenerated, false);
+      assert.equal(r.body.data.letter.reason, "SENDING");
+      const after = await h.prisma.startupJoinRequest.findUnique({ where: { id: requestId }, select: { offerDocumentId: true, offerStatus: true } });
+      assert.equal(after!.offerDocumentId, before!.offerDocumentId);
+      assert.equal(after!.offerStatus, "SENDING");
+
+      // An employee approved without a letter: editing never creates one.
+      const emp = await h.person("emp-noletter");
+      const req = await ask(emp, zappy, "EMPLOYEE");
+      const a = await approve(zappy, zFounder, req.body.data.id);
+      assert.equal(a.status, 200, JSON.stringify(a.body));
+      const e = await h.call("PATCH", w(zappy, `/team/${a.body.data.personId}`), zFounder.token, { designation: "Staff Engineer" });
+      assert.equal(e.status, 200);
+      assert.equal(e.body.data.letter.regenerated, false);
+      assert.equal(e.body.data.letter.reason, "NO_LETTER");
+      assert.equal(e.body.data.offerLetter, null);
+    });
+
     test("letters are tenant-scoped: other startups and non-HR cannot touch them", async () => {
       sw.mail = false;
       const { person, requestId } = await approvedIntern("intern-scope", zappy, zFounder);

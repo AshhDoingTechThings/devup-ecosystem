@@ -31,7 +31,7 @@ interface RequestRow {
   reviewedAt: string | null
   reviewedBy: string | null
   reviewNote: string | null
-  offerStatus: 'SENDING' | 'SENT' | 'FAILED' | null
+  offerStatus: 'SENDING' | 'SENT' | 'FAILED' | 'READY' | null
   offerError: string | null
   startup: Startup
 }
@@ -214,6 +214,7 @@ export default function WorkspaceRequests() {
                       <Badge label={statusLabel[r.status]} variant={statusVariant[r.status]} />
                       {r.offerStatus === 'FAILED' && <div className="text-[11px] text-red-400 mt-1">Offer letter failed</div>}
                       {r.offerStatus === 'SENT' && <div className="text-[11px] text-emerald-400 mt-1">Offer letter sent</div>}
+                      {r.offerStatus === 'READY' && <div className="text-[11px] text-sky-400 mt-1">Revised letter ready to send</div>}
                     </td>
                     <td className="px-6 py-4 text-right">
                       <Button variant="ghost" size="sm" onClick={() => setSelectedId(r.id)}>Review</Button>

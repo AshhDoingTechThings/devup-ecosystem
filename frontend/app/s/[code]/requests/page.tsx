@@ -250,7 +250,7 @@ export default function JoinRequestsPage() {
           code={code}
           personId={editId}
           onClose={() => setEditId(null)}
-          onSaved={(p) => { setEditId(null); setNoticeTone("ok"); setNotice(`${p.fullName}'s details were updated.`); load(); }}
+          onSaved={(p) => { setEditId(null); setNoticeTone("ok"); setNotice(savedNotice(p)); load(); }}
         />
       )}
 
@@ -461,10 +461,17 @@ function ReviewDrawer({ code, id, onClose, onDone, onEdited }: { code: string; i
                       This letter didn&apos;t finish sending: the server restarted part-way through, so we can&apos;t confirm it reached {r.fullName}. Send it again if they don&apos;t have it.
                     </p>
                   )}
-                  {(r.offer?.status === "FAILED" || !r.offer?.status || r.offer?.stuck) && (
+                  {r.offer?.status === "READY" && (
+                    <p className="mt-1 text-[#8b8b8b]" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+                      Regenerated after their details were edited. Not emailed yet.
+                    </p>
+                  )}
+                  {(r.offer?.status === "FAILED" || !r.offer?.status || r.offer?.status === "READY" || r.offer?.stuck) && (
                     <button
                       onClick={async () => {
-                        const question = r.offer?.stuck
+                        const question = r.offer?.status === "READY"
+                          ? `Email offer letter ${r.offer.documentNo} to ${r.user.email}?`
+                          : r.offer?.stuck
                           ? `Send ${r.offer.documentNo ?? "the offer letter"} to ${r.user.email} again? If the first attempt did go out, they will get a second copy.`
                           : r.offer?.documentNo ? `Re-send ${r.offer.documentNo} to ${r.fullName}?` : `Issue and email an offer letter to ${r.fullName}?`;
                         if (!window.confirm(question)) return;
@@ -481,7 +488,7 @@ function ReviewDrawer({ code, id, onClose, onDone, onEdited }: { code: string; i
                       disabled={letterBusy}
                       className="mt-2 rounded-lg border border-white/15 px-3 py-1.5 text-[12.5px] font-semibold text-white transition hover:bg-white/5 disabled:opacity-50"
                     >
-                      {letterBusy ? "Sending…" : r.offer?.stuck ? "Send again" : r.offer?.documentNo ? "Retry sending" : "Issue offer letter"}
+                      {letterBusy ? "Sending…" : r.offer?.status === "READY" ? "Send letter" : r.offer?.stuck ? "Send again" : r.offer?.documentNo ? "Retry sending" : "Issue offer letter"}
                     </button>
                   )}
                 </section>
@@ -644,6 +651,7 @@ const HISTORY_LABEL: Record<string, string> = {
   "affiliation.offer_sent": "Offer letter emailed",
   "affiliation.offer_failed": "Offer letter not sent",
   "hrms.person_updated": "Details edited",
+  "affiliation.offer_regenerated": "Offer letter regenerated",
 };
 
 function Item({ k, v }: { k: string; v?: string | number | null }) {
@@ -669,11 +677,20 @@ function Input({ label, value, onChange, type = "text" }: { label: string; value
   );
 }
 
+function savedNotice(p: any) {
+  const l = p.letter;
+  if (!l) return `${p.fullName}'s details were updated.`;
+  if (!l.regenerated) return `${p.fullName}'s details were updated. The offer letter was not regenerated: ${l.message ?? ""}`;
+  if (p.letterSent) return `${p.fullName}'s details were updated and revised offer letter ${l.documentNo} was emailed.`;
+  return `${p.fullName}'s details were updated. Revised offer letter ${l.documentNo} is ready to send from the Approved tab.`;
+}
+
 function LetterBadge({ status, className = "" }: { status: string; className?: string }) {
   const tone =
     status === "SENT" ? { t: "Letter sent", c: "bg-[#c8f135]/10 text-[#c8f135] border-[#c8f135]/25" }
     : status === "FAILED" ? { t: "Letter failed", c: "bg-red-500/10 text-red-300 border-red-500/25" }
     : status === "STUCK" ? { t: "Letter stuck", c: "bg-amber-500/10 text-amber-300 border-amber-500/25" }
+    : status === "READY" ? { t: "Ready to send", c: "bg-sky-500/10 text-sky-300 border-sky-500/25" }
     : { t: "Sending letter", c: "bg-amber-500/10 text-amber-300 border-amber-500/25" };
   return <span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-[10.5px] font-semibold ${tone.c} ${className}`}>{tone.t}</span>;
 }

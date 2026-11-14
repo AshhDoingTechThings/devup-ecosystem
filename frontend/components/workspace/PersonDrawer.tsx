@@ -8,6 +8,7 @@ import {
 import { workspaceApi, ONBOARDING_DOC_LABELS, DOC_STATUS_TONE } from "@/lib/api/workspace";
 import DocumentFileLink from "@/components/workspace/DocumentFileLink";
 import EditPersonDialog from "@/components/workspace/EditPersonDialog";
+import { joinRequestAdminApi } from "@/lib/api/affiliation";
 
 /**
  * Everything about one person: their record, what they have uploaded, what the
@@ -164,6 +165,44 @@ export default function PersonDrawer({
               </Section>
 
               {/* Where they came from */}
+              {p.offerLetter && (
+                <Section
+                  title="Offer letter"
+                  action={
+                    (p.offerLetter.status === "READY" || p.offerLetter.status === "FAILED" || p.offerLetter.stuck) && (
+                      <button
+                        onClick={() => {
+                          if (!window.confirm(`Email offer letter ${p.offerLetter.documentNo} to ${p.email}?`)) return;
+                          act(async () => {
+                            const r = await joinRequestAdminApi.retryOffer(code, p.offerLetter.requestId);
+                            if (r.status !== "SENT") throw new Error(r.message || "The letter could not be sent. Try again shortly.");
+                          }, `${p.offerLetter.documentNo} was emailed to ${p.email}`);
+                        }}
+                        disabled={busy}
+                        className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-black transition hover:brightness-110 disabled:opacity-40"
+                        style={{ background: "#c8f135" }}
+                      >
+                        <Mail className="h-3 w-3" /> Send letter
+                      </button>
+                    )
+                  }
+                >
+                  <div className="space-y-1.5 text-[12px]">
+                    <Row k="Letter" v={p.offerLetter.documentNo} mono />
+                    <Row
+                      k="Status"
+                      v={
+                        p.offerLetter.stuck ? "Stuck — didn't finish sending"
+                        : p.offerLetter.status === "READY" ? "Ready to send (not emailed yet)"
+                        : p.offerLetter.status === "SENT" ? `Emailed ${p.offerLetter.sentAt ? fmt(p.offerLetter.sentAt) : ""}`
+                        : p.offerLetter.status === "FAILED" ? "Not sent — try again"
+                        : "Sending…"
+                      }
+                    />
+                  </div>
+                </Section>
+              )}
+
               <Section title="Source">
                 {p.application ? (
                   <div className="space-y-1.5 text-[12px]">
@@ -318,8 +357,14 @@ export default function PersonDrawer({
             onSaved={(updated) => {
               setEditing(false);
               setP(updated);
+              load(); // the letter may have been emailed from the dialog since this was saved
               setError(null);
-              setNotice("Details saved");
+              setNotice(
+                !updated.letter ? "Details saved"
+                : !updated.letter.regenerated ? `Details saved. The offer letter was not regenerated: ${updated.letter.message ?? ""}`
+                : updated.letterSent ? `Details saved. Revised offer letter ${updated.letter.documentNo} was emailed.`
+                : `Details saved. Revised offer letter ${updated.letter.documentNo} is ready to send.`
+              );
               onChanged?.();
             }}
           />
