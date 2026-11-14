@@ -1,6 +1,8 @@
 import { prisma } from '../../lib/prisma'
 import { assertPublicWebUrl } from '../../lib/publicUrl'
 import { logger } from '../../middleware/logger'
+import { AppError } from '../../middleware/errorHandler'
+import { openrouterChat, candidateModels } from '../../lib/openrouter'
 
 const FIRECRAWL_URL = process.env.FIRECRAWL_BASE_URL!
 const FIRECRAWL_KEY = process.env.FIRECRAWL_API_KEY!
@@ -62,7 +64,7 @@ async function synthesizeAnalysis(
   startupName: string,
   websiteUrl: string,
   crawledContent: string | null
-): Promise<{ analysis: StartupAnalysis; tokensUsed: number }> {
+): Promise<{ analysis: StartupAnalysis; tokensUsed: number; model: string }> {
   
   const systemPrompt = `You are a senior startup analyst at a top Indian 
 startup incubator. You evaluate startups for an internal ecosystem database. 
@@ -104,30 +106,16 @@ Research this startup using web search for any additional context
 (news, funding announcements, social presence, reviews) beyond what's 
 shown above, then return the structured JSON analysis.`
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': process.env.FRONTEND_URL || '',
-      'X-Title': 'DevUp Ecosystem',
-    },
-    body: JSON.stringify({
-      model: process.env.OPENROUTER_ONLINE_MODEL || 'openai/gpt-3.5-turbo',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0.3,
-      max_tokens: 1500,
-    }),
+  // Retired models (OpenRouter 404) fall through to current ones; other
+  // provider failures surface as clear errors rather than a bare 500.
+  const { data, model } = await openrouterChat([process.env.OPENROUTER_ONLINE_MODEL], {
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    temperature: 0.3,
+    max_tokens: 1500,
   })
-
-  if (!response.ok) {
-    throw new Error(`OpenRouter error: ${response.status}`)
-  }
-
-  const data = await response.json() as any
   const rawText = data.choices?.[0]?.message?.content || ''
   const tokensUsed = data.usage?.total_tokens || 0
 
@@ -136,12 +124,13 @@ shown above, then return the structured JSON analysis.`
   try {
     parsed = JSON.parse(stripCodeFences(rawText))
   } catch {
-    parsed = await retryJsonParse(rawText, systemPrompt, userPrompt)
+    parsed = await retryJsonParse(rawText, systemPrompt, userPrompt, model)
   }
 
   return { 
     analysis: { ...parsed, generatedAt: new Date().toISOString() }, 
-    tokensUsed 
+    tokensUsed,
+    model,
   }
 }
 
@@ -152,16 +141,10 @@ function stripCodeFences(text: string): string {
 async function retryJsonParse(
   badResponse: string,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  modelThatAnswered: string
 ): Promise<StartupAnalysis> {
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: process.env.OPENROUTER_FAST_MODEL,
+  const { data } = await openrouterChat([process.env.OPENROUTER_FAST_MODEL, modelThatAnswered], {
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -170,10 +153,12 @@ async function retryJsonParse(
       ],
       temperature: 0,
       max_tokens: 1500,
-    }),
   })
-  const data = await response.json() as any
-  return JSON.parse(stripCodeFences(data.choices?.[0]?.message?.content || '{}'))
+  try {
+    return JSON.parse(stripCodeFences(data.choices?.[0]?.message?.content || '{}'))
+  } catch {
+    throw new AppError(502, 'The AI returned an unreadable answer. Please try again.', 'AI_BAD_RESPONSE')
+  }
 }
 
 // ── MAIN ENTRY POINT ──────────────────────────────
@@ -227,6 +212,8 @@ export async function researchStartup(params: {
   // Step 2: synthesize (online search fills gaps even if crawl failed)
   let analysis: StartupAnalysis
   let tokensUsed = 0
+  // The model we asked for first; replaced by the one that actually answered.
+  let modelUsed = candidateModels([process.env.OPENROUTER_ONLINE_MODEL])[0]
   let status = 'SUCCESS'
   let errorMessage: string | null = null
 
@@ -236,6 +223,7 @@ export async function researchStartup(params: {
     )
     analysis = result.analysis
     tokensUsed = result.tokensUsed
+    modelUsed = result.model
     if (crawlError) status = 'PARTIAL'
   } catch (err) {
     status = 'FAILED'
@@ -248,7 +236,7 @@ export async function researchStartup(params: {
         applicationId: params.applicationId,
         triggeredBy: params.triggeredBy,
         sourceUrl: params.websiteUrl,
-        openrouterModel: process.env.OPENROUTER_ONLINE_MODEL || 'openai/gpt-3.5-turbo',
+        openrouterModel: modelUsed,
         tokensUsed,
         latencyMs: Date.now() - startTime,
         status,
@@ -265,7 +253,7 @@ export async function researchStartup(params: {
         aiAnalysis: analysis as any,
         aiAnalyzedAt: new Date(),
         aiSourceUrl: params.websiteUrl,
-        aiModelVersion: process.env.OPENROUTER_ONLINE_MODEL || 'openai/gpt-3.5-turbo',
+        aiModelVersion: modelUsed,
       },
     })
   }

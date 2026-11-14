@@ -1,33 +1,15 @@
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../middleware/errorHandler";
-import { env } from "../../config/env";
+import { openrouterChat } from "../../lib/openrouter";
 import { OPENROUTER_MODELS } from "../../config/openrouter";
 
 export class AiService {
   private async callOpenRouter(prompt: string, model: string = OPENROUTER_MODELS.default) {
-    const response = await fetch(`${env.OPENROUTER_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
-        "HTTP-Referer": env.FRONTEND_URL,
-        "X-Title": "DevUp Ecosystem",
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: prompt }]
-      })
-    });
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        throw new AppError(429, "AI rate limit exceeded from upstream provider.");
-      }
-      throw new AppError(500, "Failed to call AI service");
-    }
-
-    const data: any = await response.json();
-    return data.choices[0].message.content;
+    // Falls through retired models to current ones; clear errors otherwise.
+    const { data } = await openrouterChat([model], { messages: [{ role: "user", content: prompt }] });
+    const content = data?.choices?.[0]?.message?.content;
+    if (typeof content !== "string") throw new AppError(502, "The AI returned an empty answer. Please try again.", "AI_BAD_RESPONSE");
+    return content;
   }
 
   async reviewApplication(applicationId: string) {

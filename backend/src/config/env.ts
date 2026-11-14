@@ -39,9 +39,11 @@ const envSchema = z.object({
 
   OPENROUTER_API_KEY: z.string().default("sk-or-dev-placeholder"),
   OPENROUTER_BASE_URL: z.string().default("https://openrouter.ai/api/v1"),
-  OPENROUTER_DEFAULT_MODEL: z.string().default("anthropic/claude-3.5-sonnet"),
-  OPENROUTER_FAST_MODEL: z.string().default("meta-llama/llama-3.1-8b-instruct:free"),
-  OPENROUTER_VISION_MODEL: z.string().default("google/gemini-flash-1.5"),
+  // Defaults must be models OpenRouter still offers (checked 2026-11-14); a
+  // retired one answers 404, and lib/openrouter then falls back to current ones.
+  OPENROUTER_DEFAULT_MODEL: z.string().default("anthropic/claude-sonnet-4.5"),
+  OPENROUTER_FAST_MODEL: z.string().default("openai/gpt-4o-mini"),
+  OPENROUTER_VISION_MODEL: z.string().default("google/gemini-2.5-flash"),
 
   RESEND_API_KEY: z.string().default("re_dev_placeholder"),
   RESEND_FROM_EMAIL: z.string().default("noreply@devup.local"),
