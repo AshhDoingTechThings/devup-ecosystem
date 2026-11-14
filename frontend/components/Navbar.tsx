@@ -24,7 +24,10 @@ const navLinks = [
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const pathname = usePathname();
-  const { user, signOut, loading } = useAuth();
+  const { user, session, signOut, loading } = useAuth();
+  // Signed in but the profile isn't loaded (or failed): show neither the
+  // account menu nor "Sign in" — the page itself explains and offers Retry.
+  const authPending = loading || (!user && !!session?.user);
   const [mobileDropdownOpen, setMobileDropdownOpen] = useState(false);
 
   useEffect(() => {
@@ -101,7 +104,7 @@ export function Navbar() {
 
       {/* Right: Auth */}
       <div className="desktop-nav-links" style={{ flex: 1, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 16 }}>
-        {loading ? null : user ? (
+        {authPending ? null : user ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <Link href="/dashboard" style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -169,7 +172,7 @@ export function Navbar() {
 
       {/* Mobile Auth CTA (visible only below 1024px) */}
       <div className="mobile-nav-auth">
-        {loading ? null : user ? (
+        {authPending ? null : user ? (
           <div style={{ position: 'relative' }}>
             <button
               onClick={() => setMobileDropdownOpen(!mobileDropdownOpen)}

@@ -32,7 +32,7 @@ const MORE_ITEMS = [
 export default function MobileBottomNav() {
   const pathname = usePathname()
   const router = useRouter()
-  const { user, signOut } = useAuth()
+  const { user, session, signOut } = useAuth()
   const [moreOpen, setMoreOpen] = useState(false)
 
   const isActive = (href: string) =>
@@ -300,7 +300,7 @@ export default function MobileBottomNav() {
               }} />
 
               {/* Account row */}
-              {user ? (
+              {!user && session?.user ? null : user ? (
                 <div style={{ display: 'flex', gap: 10 }}>
                   <Link
                     href="/dashboard"

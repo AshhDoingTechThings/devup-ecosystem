@@ -51,7 +51,19 @@ interface AuthContextType {
   signOut: () => Promise<void>
   updateProfile: (data: Partial<UserProfile>) => Promise<void>
   refreshProfile: () => Promise<void>
+  /**
+   * Signed in with Supabase, but the DevUp profile could not be loaded:
+   *  - 'unavailable': the API failed or timed out (5xx, network, cold start).
+   *    The session is kept; the UI offers Retry.
+   *  - 'session': the API rejected the token (expired or invalid). The UI
+   *    offers "Sign in again"; nothing signs the person out by itself.
+   * null when there is no session, while loading, and once the profile is in.
+   */
+  profileError: ProfileError
+  retryProfile: () => Promise<void>
 }
+
+export type ProfileError = null | 'unavailable' | 'session'
 
 interface SignUpData {
   email: string
@@ -82,18 +94,40 @@ function toProfile(userData: any): UserProfile {
   }
 }
 
-/** No screen may say "loading" forever because one request stalled. */
-const LOADING_CEILING_MS = 20_000
+/**
+ * No screen may say "loading" forever because one request stalled. Longer than
+ * a typical Render cold start (~22 s), so waking the API doesn't flash an error.
+ */
+const LOADING_CEILING_MS = 30_000
+
+/** Covers a Render cold start (~22 s) with room to spare. */
+const PROFILE_TIMEOUT_MS = 45_000
+
+/** The OAuth callback creates the account itself; never race it. */
+const onCallbackPage = () => typeof window !== 'undefined' && window.location.pathname.startsWith('/auth/callback')
+
+async function fetchWithTimeout(url: string, init: RequestInit, ms: number) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const [profileError, setProfileError] = useState<ProfileError>(null)
   const router = useRouter()
   const supabase = createClient()
   const sessionRef = useRef<Session | null>(null)
   const loadedFor = useRef<string | null>(null)
   const inFlight = useRef<{ userId: string; promise: Promise<void> } | null>(null)
+  /** Accounts we already tried to create from here (once per page load). */
+  const syncAttempted = useRef<Set<string>>(new Set())
 
   /**
    * Loads the signed-in person's profile with the token we were handed.
@@ -114,19 +148,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const entry: { userId: string; promise: Promise<void> } = { userId, promise: Promise.resolve() }
     entry.promise = (async () => {
+      const auth = { Authorization: `Bearer ${s.access_token}` }
+      const fetchProfile = () => fetchWithTimeout(`${API_URL}/api/users/${userId}`, { headers: auth }, PROFILE_TIMEOUT_MS)
       try {
-        const response = await fetch(`${API_URL}/api/users/${userId}`, {
-          headers: { Authorization: `Bearer ${s.access_token}` },
-        })
+        let response = await fetchProfile()
+
+        // Signed in, but no DevUp account behind the identity — e.g. a Google
+        // sign-in whose account sync never ran. Create it once, then re-read.
+        // Not on the callback page: it runs this same sync itself.
+        if (response.status === 401) {
+          const body = await response.clone().json().catch(() => ({}))
+          const provider = s.user.app_metadata?.provider
+          if (body?.code === 'USER_NOT_FOUND') {
+            if (onCallbackPage()) return // the callback syncs, then calls refreshProfile()
+            if (provider && provider !== 'email' && !syncAttempted.current.has(userId)) {
+              syncAttempted.current.add(userId)
+              const synced = await fetchWithTimeout(`${API_URL}/api/auth/google/sync`, {
+                method: 'POST',
+                headers: { ...auth, 'Content-Type': 'application/json' },
+              }, PROFILE_TIMEOUT_MS)
+              if (synced.ok) response = await fetchProfile()
+            }
+          }
+        }
+
         if (response.ok) {
           const { data } = await response.json()
           loadedFor.current = userId
           setUser(toProfile(data))
+          setProfileError(null)
+          return
         }
-        // A brand-new Google account has no profile until the callback's sync
-        // creates it; the callback calls refreshProfile() once it has.
+
+        // A failed request is never treated as being signed out. 401/403 mean
+        // the API rejected this session; anything else is the API's problem.
+        setProfileError(response.status === 401 || response.status === 403 ? 'session' : 'unavailable')
+        console.error(`Profile request failed: HTTP ${response.status}`)
       } catch (error) {
-        console.error('Failed to fetch user profile:', error instanceof Error ? error.message : 'network error')
+        setProfileError('unavailable')
+        console.error('Profile request failed:', error instanceof Error && error.name === 'AbortError' ? 'timed out' : 'network error')
       } finally {
         if (inFlight.current === entry) inFlight.current = null
         setLoading(false)
@@ -137,7 +197,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   useEffect(() => {
-    const ceiling = setTimeout(() => setLoading(false), LOADING_CEILING_MS)
+    // Still nothing after the ceiling: say so (with Retry) rather than spin.
+    // The request keeps going; if it lands later, the profile appears.
+    const ceiling = setTimeout(() => {
+      if (sessionRef.current?.user && !loadedFor.current && !onCallbackPage()) setProfileError((e) => e ?? 'unavailable')
+      setLoading(false)
+    }, LOADING_CEILING_MS)
 
     // One listener, and it awaits nothing. INITIAL_SESSION fires on subscribe,
     // so there is no separate getSession() call (that used to fetch the
@@ -149,6 +214,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (event === 'SIGNED_OUT' || !next?.user) {
         loadedFor.current = null
         setUser(null)
+        setProfileError(null)
         setLoading(false)
         if (event === 'SIGNED_OUT') router.push('/')
         return
@@ -185,6 +251,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await loadProfile(s, true)
     }
   }, [loadProfile, supabase.auth])
+
+  /** The Retry button: same session, one more attempt. */
+  const retryProfile = useCallback(async () => {
+    const s = sessionRef.current
+    if (!s?.user) return
+    setProfileError(null)
+    setLoading(true)
+    await loadProfile(s, true)
+  }, [loadProfile])
 
   const signUp = async (data: SignUpData) => {
     try {
@@ -289,7 +364,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   return (
     <AuthContext.Provider value={{
       user, session, loading,
-      signUp, signIn, signInWithGoogle, signInWithOAuth, signOut, updateProfile, refreshProfile
+      signUp, signIn, signInWithGoogle, signInWithOAuth, signOut, updateProfile, refreshProfile,
+      profileError, retryProfile,
     }}>
       {children}
     </AuthContext.Provider>
