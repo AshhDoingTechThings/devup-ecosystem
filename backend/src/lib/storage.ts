@@ -2,6 +2,7 @@ import { supabaseAdmin } from "../config/supabase";
 import { AppError } from "../middleware/errorHandler";
 import { env } from "../config/env";
 import { objectKey, verifyUpload } from "./uploads";
+import { logger } from "../middleware/logger";
 
 export const uploadFile = async (
   bucket: string,
@@ -46,13 +47,21 @@ export async function uploadStartupImage(
   const bucket = type === 'logo' ? env.STORAGE_BUCKET_LOGOS : env.STORAGE_BUCKET_BANNERS;
   const filename = objectKey([folder], type, image.ext);
 
-  const { error } = await supabaseAdmin.storage
-    .from(bucket)
-    .upload(filename, image.buffer, {
-      contentType: image.mime,
-      cacheControl: '3600',
-      upsert: false,
-    });
+  let error: { message: string } | null = null;
+  try {
+    ({ error } = await supabaseAdmin.storage
+      .from(bucket)
+      .upload(filename, image.buffer, {
+        contentType: image.mime,
+        cacheControl: '3600',
+        upsert: false,
+      }));
+  } catch (err) {
+    // A dropped connection or timeout throws rather than returning `error`;
+    // it used to reach the client as a bare "Internal Server Error".
+    logger.warn(`startup image upload failed (${type}): ${(err as Error).message}`);
+    throw new AppError(502, "The image upload didn't go through. Check your connection and try again.", "UPLOAD_FAILED");
+  }
 
   if (error) throw new AppError(500, `Upload failed: ${error.message}`, "UPLOAD_FAILED");
 

@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { StartupsService } from "./startups.service";
 import { uploadStartupImage } from "../../lib/storage";
 import { verifyUpload } from "../../lib/uploads";
+import { prisma } from "../../lib/prisma";
 
 const startupsService = new StartupsService();
 
@@ -37,6 +38,18 @@ export class StartupsController {
 
     // The owner is decided by the service from who is asking, not by the body.
     const payload = { ...req.body };
+
+    // Refuse a taken slug before uploading anything: otherwise the images go
+    // to storage first and the save then fails on the unique slug, leaving
+    // orphaned files and a generic error.
+    const slug = typeof payload.slug === "string" ? payload.slug.trim() : "";
+    if (slug && (await prisma.startup.findUnique({ where: { slug }, select: { id: true } }))) {
+      return res.status(409).json({
+        success: false,
+        error: `A startup with the slug "${slug}" already exists. Choose another slug, or edit the existing startup.`,
+        code: "SLUG_TAKEN",
+      });
+    }
 
     if (payload.foundedYear) payload.foundedYear = parseInt(payload.foundedYear, 10);
     if (payload.fundingAmount) payload.fundingAmount = parseFloat(payload.fundingAmount);

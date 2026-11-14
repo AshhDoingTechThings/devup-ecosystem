@@ -110,7 +110,14 @@ export class StartupsService {
     // never exist without an owner. Self-serve creation always makes the caller
     // the owner; only DevUp may create a startup on someone else's behalf.
     // Previously any founder could name an arbitrary user id as the owner.
-    const founderId = isPlatformAdmin(actor.role) && data?.founderId ? String(data.founderId) : actor.id;
+    const namedFounder = isPlatformAdmin(actor.role) && data?.founderId ? String(data.founderId) : null;
+    const founderId = namedFounder ?? actor.id;
+    // A DevUp admin listing a startup (often an external partner) is not one of
+    // its founders. They stay the owner of record — the column is required —
+    // but are never shown as a co-founder or given a founder seat; DevUp admins
+    // manage every startup through their platform role anyway. Previously the
+    // admin who created a listing appeared on its public Team tab.
+    const creatorIsFounder = Boolean(namedFounder) || !isPlatformAdmin(actor.role);
 
     return await prisma.$transaction(async (tx) => {
       const startup = await tx.startup.create({
@@ -118,14 +125,16 @@ export class StartupsService {
           ...(writableFields(data, actor.role) as any),
           founderId,
           isVerified: true,
-          founders: { connect: [{ id: founderId }] }
+          ...(creatorIsFounder && { founders: { connect: [{ id: founderId }] } }),
         }
       });
 
-      await createStartupOwnership(tx, {
-        startupId: startup.id,
-        userId: founderId,
-      });
+      if (creatorIsFounder) {
+        await createStartupOwnership(tx, {
+          startupId: startup.id,
+          userId: founderId,
+        });
+      }
 
       return startup;
     });
