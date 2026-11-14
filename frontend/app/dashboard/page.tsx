@@ -14,11 +14,18 @@ import {
 } from 'lucide-react'
 import ProtectedContent from '@/components/auth/ProtectedContent'
 import WorkspaceBanner from '@/components/workspace/WorkspaceBanner'
+import AffiliationCard from '@/components/workspace/AffiliationCard'
 
 export default function DashboardPage() {
   const { user, session, loading, signOut } = useAuth()
   const router = useRouter()
   const isMobile = useIsMobile()
+  // Quick Actions: the full-size tile needs ~174px, which two-per-row phones
+  // under ~400px and four-per-row tablets under ~800px don't have, so labels
+  // like "Hackathons" broke mid-word. Below 820px the tile is compacted; below
+  // 360px (e.g. 320px) the chevron is dropped too, so every label fits whole.
+  const isCompact = useIsMobile(820)
+  const isNarrow = useIsMobile(360)
   const { isAdmin, isFounder, hasPermission } = usePermissions()
 
   // Removed redirect to let AuthGate handle it
@@ -214,8 +221,10 @@ export default function DashboardPage() {
           </h2>
           <div style={{
             display: 'grid',
-            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)',
-            gap: 12,
+            // minmax(0, …): a plain 1fr won't shrink below its content, which
+            // pushed the right-hand tiles past the screen edge at 320px.
+            gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))',
+            gap: isCompact ? 8 : 12,
           }}>
             {[
               { icon: Trophy, label: 'Hackathons', href: '/hackathons', color: '#f59e0b' },
@@ -229,8 +238,9 @@ export default function DashboardPage() {
                 key={i}
                 href={action.href}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '14px 16px',
+                  display: 'flex', alignItems: 'center', gap: isCompact ? 8 : 10,
+                  padding: isCompact ? '12px 10px' : '14px 16px',
+                  minWidth: 0,
                   background: '#111111',
                   border: '1px solid rgba(255,255,255,0.07)',
                   borderRadius: 12,
@@ -247,7 +257,7 @@ export default function DashboardPage() {
                 }}
               >
                 <div style={{
-                  width: 32, height: 32, borderRadius: 8,
+                  width: 32, height: 32, borderRadius: 8, flexShrink: 0,
                   background: `${action.color}15`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}>
@@ -255,16 +265,20 @@ export default function DashboardPage() {
                 </div>
                 <span style={{
                   fontFamily: 'Inter, sans-serif',
-                  fontSize: 13, fontWeight: 600,
+                  fontSize: isCompact ? 12 : 13, fontWeight: 600,
                   color: '#e4e4e4',
+                  minWidth: 0, overflowWrap: 'break-word',
                 }}>
                   {action.label}
                 </span>
-                <ChevronRight size={14} style={{ marginLeft: 'auto', color: '#3d3d3d' }} />
+                {!isNarrow && <ChevronRight size={14} style={{ marginLeft: 'auto', color: '#3d3d3d', flexShrink: 0 }} />}
               </Link>
             ))}
           </div>
         </motion.div>
+
+        {/* ─── STARTUP WORK (employee / intern affiliation) ─── */}
+        <AffiliationCard />
 
         {/* ─── ROLE-BASED DASHBOARD CONTENT ─── */}
         <motion.div
