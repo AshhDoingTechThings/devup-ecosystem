@@ -50,8 +50,8 @@ export default function LayoutClient({
    * sidebar and navigation. The marketing chrome — navbar, footer, mobile tab
    * bar, intro animation — is hidden there so the whole viewport belongs to it.
    */
-  // The finance portal (/finance) is the same kind of self-contained app.
-  const isWorkspace = (pathname?.startsWith("/s/") || pathname === "/finance" || pathname?.startsWith("/finance/")) ?? false;
+  // The finance portal (/finance) and a startup's bill page (/bill/<link>) are the same kind of app.
+  const isWorkspace = (pathname?.startsWith("/s/") || pathname === "/finance" || pathname?.startsWith("/finance/") || pathname?.startsWith("/bill/")) ?? false;
 
   // The root layout paints a full-screen #intro-overlay that only IntroAnimation
   // removes — and IntroAnimation isn't rendered in these apps. Without this, a

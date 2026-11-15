@@ -16,6 +16,10 @@ import * as events from "./events.service";
 import { checkCronSecret, runDaily } from "./cron.service";
 import * as payroll from "./payroll.service";
 import * as payslips from "./payslips.service";
+import * as invoices from "./invoices.service";
+import * as revenueSvc from "./revenue.service";
+import { periodRange } from "./money";
+import * as reports from "./reports.service";
 
 /**
  * /api/finance — the CFO portal.
@@ -34,6 +38,13 @@ const router = Router();
  * signed-in finance routes (see app.ts).
  */
 export const financeCronRouter = Router();
+/** /api/finance/public — a startup viewing its DevUp bill by its unguessable link. Read-only. */
+export const financePublicRouter = Router();
+financePublicRouter.get("/bills/:token", async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  res.json({ success: true, data: await invoices.publicInvoice(String(req.params.token)) });
+});
+
 financeCronRouter.post("/daily", async (req, res) => {
   checkCronSecret(req.header("x-cron-secret"));
   res.json({ success: true, data: await runDaily() });
@@ -283,6 +294,81 @@ router.post(
   validate(idParam.extend({ body: z.object({ ...expenseFields, scope: scope.optional(), action: z.enum(["draft", "submit", "paid"]).optional(), paymentRef: text(120), paidOn: date.nullable().optional() }) })),
   async (req, res) => ok(res, await events.addCost(req.finance!, req.params.id as string, req.body), 201),
 );
+
+/* Startup bills, receipts and reminders */
+
+const invoiceBody = z.object({
+  recipientStartupId: uuid, title: z.string().trim().min(2).max(200), description: text(2000),
+  lines: z.array(z.object({ label: z.string().trim().min(2).max(200), amount: money })).min(1).max(50),
+  dueDate: date.nullable().optional(), periodStart: date.nullable().optional(), periodEnd: date.nullable().optional(),
+  billingEmail: z.string().trim().email().max(200).nullable().optional().or(z.literal("")), maxReminders: z.coerce.number().int().min(0).max(10).optional(),
+});
+router.get("/invoices", async (req, res) => ok(res, await invoices.listInvoices(req.finance!, { scope: req.query.scope as string | undefined, status: req.query.status as any, overdue: req.query.overdue === "1" })));
+router.get("/invoices/suggest", requireCfo, validate(z.object({ query: z.object({ startupId: uuid, from: date, to: date }) })), async (req, res) =>
+  ok(res, await invoices.suggestFromSharedCosts(req.finance!, String(req.query.startupId), String(req.query.from), String(req.query.to))));
+router.get("/invoices/:id", validate(idParam), async (req, res) => ok(res, await invoices.getInvoice(req.finance!, req.params.id as string)));
+router.post("/invoices", requireCfo, validate(z.object({ body: invoiceBody })), async (req, res) => ok(res, await invoices.createInvoice(req.finance!, req.body), 201));
+router.post("/invoices/:id/issue", requireCfo, validate(idParam.extend({ body: z.object({ dueDate: date.nullable().optional() }) })), async (req, res) => ok(res, await invoices.issueInvoice(req.finance!, req.params.id as string, req.body)));
+router.post("/invoices/:id/cancel", requireCfo, validate(idParam.extend({ body: z.object({ reason: z.string().trim().min(3).max(500) }) })), async (req, res) => ok(res, await invoices.cancelInvoice(req.finance!, req.params.id as string, req.body.reason)));
+router.post("/invoices/:id/flag", requireCfo, validate(idParam.extend({ body: z.object({ flag: z.enum(["DISPUTED", "UNDER_RECONCILIATION"]).nullable(), note: text(1000) }) })), async (req, res) =>
+  ok(res, await invoices.flagInvoice(req.finance!, req.params.id as string, req.body)));
+router.post("/invoices/:id/receipts", requireCfo, validate(idParam.extend({ body: z.object({ amount: money, receivedOn: date, method: method.nullable().optional(), reference: text(120), note: text(500) }) })), async (req, res) =>
+  ok(res, await invoices.recordReceipt(req.finance!, req.params.id as string, req.body), 201));
+router.post("/invoices/:id/receipts/:receiptId/reverse", requireCfo, validate(z.object({ params: z.object({ id: uuid, receiptId: uuid }), body: z.object({ reason: z.string().trim().min(3).max(500) }) })), async (req, res) =>
+  ok(res, await invoices.reverseReceipt(req.finance!, req.params.id as string, req.params.receiptId as string, req.body.reason)));
+router.post("/invoices/:id/remind", requireCfo, validate(idParam), async (req, res) => ok(res, await invoices.remindNow(req.finance!, req.params.id as string)));
+
+/* Revenue and collaborations */
+
+router.get("/revenue", validate(periodQuery), async (req, res) => {
+  const q = req.query as any;
+  const { from, to } = periodRange(q.period ?? "month", q.anchor ? new Date(`${q.anchor}T00:00:00Z`) : new Date(), { from: q.from, to: q.to });
+  ok(res, await revenueSvc.revenue(req.finance!, { scope: q.scope, from, to }));
+});
+router.post(
+  "/income",
+  validate(z.object({ body: z.object({
+    scope, source: z.enum(["CLIENT_PAYMENT", "SERVICE_INCOME", "PROJECT_INCOME", "SPONSORSHIP", "PARTNER_CONTRIBUTION", "EVENT_INCOME", "GRANT", "OTHER"]),
+    title: z.string().trim().min(2).max(200), payer: z.string().trim().min(2).max(200), amount: money, receivedOn: date, method: method.nullable().optional(),
+    reference: text(120), collaborationId: uuid.nullable().optional(), notes: text(1000),
+  }) })),
+  async (req, res) => ok(res, await revenueSvc.addIncome(req.finance!, req.body), 201),
+);
+router.post("/income/:id/void", requireCfo, validate(idParam.extend({ body: z.object({ reason: z.string().trim().min(3).max(500) }) })), async (req, res) => ok(res, await revenueSvc.voidIncome(req.finance!, req.params.id as string, req.body.reason)));
+
+const collabBody = z.object({
+  name: z.string().trim().min(2).max(160), partnerName: z.string().trim().min(2).max(160), partnerId: uuid.nullable().optional(), agreementId: uuid.nullable().optional(),
+  status: z.enum(["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"]).optional(), startDate: date.nullable().optional(), endDate: date.nullable().optional(),
+  budget: money.nullable().optional(), description: text(2000),
+  shares: z.array(z.object({ startupId: uuid, agreedContribution: money.nullable().optional(), note: text(300) })).max(30).optional(),
+});
+router.get("/collaborations", async (req, res) => ok(res, await revenueSvc.listCollaborations(req.finance!)));
+router.get("/collaborations/:id", validate(idParam), async (req, res) => ok(res, await revenueSvc.getCollaboration(req.finance!, req.params.id as string)));
+router.post("/collaborations", requireCfo, validate(z.object({ body: collabBody })), async (req, res) => ok(res, await revenueSvc.createCollaboration(req.finance!, req.body), 201));
+router.patch("/collaborations/:id", requireCfo, validate(idParam.extend({ body: collabBody.partial() })), async (req, res) => ok(res, await revenueSvc.updateCollaboration(req.finance!, req.params.id as string, req.body)));
+router.post(
+  "/collaborations/:id/costs",
+  validate(idParam.extend({ body: z.object({ ...expenseFields, action: z.enum(["draft", "submit", "paid"]).optional(), paymentRef: text(120), paidOn: date.nullable().optional() }) })),
+  async (req, res) => ok(res, await revenueSvc.addCollaborationCost(req.finance!, req.params.id as string, req.body), 201),
+);
+
+/* Reports and exports */
+
+const reportQuery = z.object({
+  params: z.object({ kind: z.enum(["summary", "expenses", "income", "payroll", "budgets", "subscriptions", "receivables", "startups"]) }),
+  query: z.object({
+    scope: z.string().optional(), period: z.enum(["day", "week", "month", "quarter", "year", "custom"]).optional(), anchor: date.optional(), from: date.optional(), to: date.optional(),
+    categoryId: uuid.optional(), status: z.enum(["DRAFT", "SUBMITTED", "NEEDS_INFO", "APPROVED", "REJECTED", "PAID", "VOID"]).optional(), format: z.enum(["csv", "xlsx", "pdf"]).optional(),
+  }),
+});
+router.get("/reports/:kind", validate(reportQuery), async (req, res) => ok(res, await reports.previewReport(req.finance!, req.params.kind as any, req.query as any)));
+router.get("/reports/:kind/export", validate(reportQuery), async (req, res) => {
+  const f = await reports.exportReport(req.finance!, req.params.kind as any, ((req.query.format as string) ?? "csv") as any, req.query as any);
+  res.setHeader("Content-Type", f.type);
+  res.setHeader("Content-Disposition", `attachment; filename="${f.filename}"`);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.send(f.body);
+});
 
 /* Payroll and stipend runs — the CFO only */
 

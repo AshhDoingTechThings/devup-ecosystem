@@ -7,13 +7,15 @@ import { notify } from "../shared/notification.service";
 import { esc, renderEmail, details } from "../../lib/email/layout";
 import { dateOnly } from "./money";
 import { generateDue } from "./recurring.service";
+import { automaticReminders } from "./invoices.service";
 
 /**
  * The daily finance job, called by a scheduler (Render cron) with the
  * FINANCE_CRON_SECRET header. It:
  *   1. creates the expenses for recurring bills that have come due;
  *   2. tells the CFO, once a day, which bills are due soon or overdue and
- *      which subscriptions renew this week — in-app and one digest email.
+ *      which subscriptions renew this week — in-app and one digest email;
+ *   3. reminds startups about overdue DevUp bills, within each bill's limits.
  * Running it twice in a day creates nothing twice and sends no second digest.
  */
 
@@ -31,7 +33,9 @@ export async function runDaily(now = new Date()) {
   const today = dateOnly(now);
   const generated = await generateDue({ today });
   const digest = await sendDigests(today);
-  return { date: day(today), billsCreated: generated.created.length, digestsSent: digest.sent };
+  // Overdue startup bills: at most one automatic reminder per bill every 7 days, up to its limit.
+  const reminders = await automaticReminders(now);
+  return { date: day(today), billsCreated: generated.created.length, digestsSent: digest.sent, remindersSent: reminders };
 }
 
 async function sendDigests(today: Date) {

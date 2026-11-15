@@ -6,6 +6,8 @@ Built so far:
 - **Slice 1:** roles, expenses, shared costs, claims, pay setup, dashboard.
 - **Slice 2:** budgets, regular (recurring) bills, subscriptions and seats, meetings and events, and the daily job.
 - **Slice 3:** payroll and stipend runs, the bank-transfer file, payment confirmation, payslips and stipend statements, and "My pay".
+- **Slice 4:** bills from DevUp to its startups (partial payments, disputes, view-by-link), reminders with limits, money received (cash basis, B2B payments read in), collaborations.
+- **Slice 5:** reports — summary, startups at a glance, expenses, money received, budget use, payroll, subscriptions, money expected from startups — as CSV, Excel or PDF, every export recorded.
 
 ## Ideas that hold everything together
 
@@ -79,6 +81,16 @@ Every route needs a signed-in user. Pay and bank routes are CFO-only; role route
 | GET | `/payroll/runs/:id/report` | CFO | Run report as CSV |
 | GET | `/me/pay` · `/payslips/:id` · `/stipend-statements/:id` | the person (or CFO) | My pay; payslip and stipend statement PDFs |
 | POST | `/cron/daily` | scheduler (header `x-cron-secret`) | Create due bills; one digest a day to the CFO |
+| GET · POST | `/invoices` · `/invoices/:id` | finance (bill's startup) · CFO | Bills to startups, with outstanding and overdue |
+| GET | `/invoices/suggest?startupId&from&to` | CFO | Lines from a startup's share of central costs, to start a bill |
+| POST | `/invoices/:id/issue` · `/cancel` · `/flag` · `/remind` | CFO | Send; cancel; mark disputed or under reconciliation (pauses reminders); remind now (once a day, up to the bill's limit) |
+| POST | `/invoices/:id/receipts` · `/receipts/:receiptId/reverse` | CFO | Record a payment (never more than owed, no duplicate reference); reverse one |
+| GET | `/public/bills/:token` | anyone with the link | The startup's read-only view of a sent bill |
+| GET | `/revenue?scope&period` | finance | Money received by source, B2B invoiced vs received |
+| POST | `/income` · `/income/:id/void` | can manage scope · CFO | Record money received; remove a mistaken entry (kept on record) |
+| GET · POST · PATCH | `/collaborations` · `/collaborations/:id` | finance · CFO | Collaborations with agreed contributions, costs, income, budget left |
+| POST | `/collaborations/:id/costs` | can manage | A cost of the collaboration (an expense with source COLLABORATION) |
+| GET | `/reports/:kind` · `/reports/:kind/export?format=csv\|xlsx\|pdf` | finance (payroll: CFO) | Preview; export. Kinds: summary, startups, expenses, income, budgets, payroll, subscriptions, receivables |
 | GET / POST | `/roles` | SUPER_ADMIN | List · grant |
 | POST | `/roles/:id/revoke` | SUPER_ADMIN | Revoke (kept on record) |
 | GET | `/roles/candidates?q=` · `/roles/startups` · `/roles/log` | SUPER_ADMIN | Pick a verified account · all startups · access log |
@@ -105,15 +117,18 @@ Then slice 2, then slice 3, each needing the one before:
 ```bash
 psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f backend/scripts/2026_finance_slice2.sql
 psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f backend/scripts/2026_finance_slice3.sql
+psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f backend/scripts/2026_finance_slice4.sql
 ```
 
-**Production status:** all three were applied to production on 2026-11-16, after a full backup (`pg_dump`, all 104 tables). Verified afterwards:
+Slice 4 must be in place before deploying any backend that includes it: the dashboard reads startup bills and income.
+
+**Production status:** all four were applied to production on 2026-11-16. Before the first three, a full backup was taken (`pg_dump`, all 104 tables); slice 4 got a fresh backup of its own (122 tables). Verified afterwards:
 - 18 new tables, RLS on, not readable by the API roles
 - 29 categories and both guards in place
 - every existing row count unchanged, and the other app's 35 tables intact
 - no drift from `schema.prisma`
 
-Rollbacks (`*_rollback.sql`) refuse while their records exist. Roll back in reverse order: slice 3, slice 2, then the foundation.
+Rollbacks (`*_rollback.sql`) refuse while their records exist. Roll back in reverse order: slice 4, 3, 2, then the foundation.
 
 Verified on a local copy built from `main`'s schema, with production's default privileges:
 - applies twice cleanly
@@ -126,11 +141,11 @@ Verified on a local copy built from `main`'s schema, with production's default p
 
 1. Create the **private** Supabase bucket `finance-documents` (or set `STORAGE_BUCKET_FINANCE`). It must not be public.
 2. Make sure `CREDENTIAL_ENCRYPTION_KEY` is set on the backend (64 hex chars). Without it, bank details are refused (503), never stored in plain text.
-3. Back up, then apply the foundation, slice 2 and slice 3 scripts, in that order (above). Done in production on 2026-11-16.
+3. Back up, then apply the foundation, slice 2, slice 3 and slice 4 scripts, in that order (above). All four were applied in production on 2026-11-16.
 4. Deploy the backend (Render: Manual Deploy), then the frontend (Vercel) and the admin portal.
 5. Set `FINANCE_CRON_SECRET` on the backend (24+ random characters). Create a Render cron job that runs daily, e.g. at 07:30 IST:
    `curl -fsS -X POST -H "x-cron-secret: $FINANCE_CRON_SECRET" https://<backend>/api/finance/cron/daily`
-   It creates due regular bills and sends the CFO one digest a day. Running it twice does nothing extra.
+   It creates due regular bills, sends the CFO one digest a day, and reminds startups about overdue bills (at most every 7 days per bill, up to each bill's limit, never while disputed). Running it twice does nothing extra.
 6. The CFO verifies their email and signs in once.
 7. Give the CFO role. Normally a super admin (not the CFO) does this in Admin → Finance Access. Until there is a real super admin, use the script (it refuses unverified accounts):
    `cd backend && npx ts-node scripts/grant-finance-role.ts --email <their email> --role ECOSYSTEM_CFO --operator "<your name>"` (dry run), then the same with `--apply`.
@@ -138,6 +153,8 @@ Verified on a local copy built from `main`'s schema, with production's default p
 8. The CFO confirms pay in **Salaries & stipends**, adds regular bills and subscriptions, and sets this month's budgets.
 
 ## Tests
+
+`backend/test/finance-invoices.test.ts` covers startup bills (lines, numbering, private until sent, the public view), payments (partial, overpayment, duplicate reference, reversal), reminder limits and the daily job's weekly gap, who sees which bills, income (internal payments never counted), and collaborations. `backend/test/finance-reports.test.ts` covers the summary and startup figures, CSV (with BOM), Excel and PDF exports, scope and CFO-only payroll, and the export audit trail.
 
 `backend/test/finance-payroll.test.ts` covers pay arithmetic (joiners, leavers, mid-month raises, prorated stipends), who is included in a run and why others are left out, one run per month even under concurrent requests, adjustments and holds, the bank file (account numbers never logged), idempotent payments that record one expense each, failures, the workspace lock on months in a run, payslips and "my pay".
 

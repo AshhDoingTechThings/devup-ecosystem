@@ -182,6 +182,40 @@ export const RUN_STATUS_LABEL: Record<PayrollRunStatus, string> = {
   DRAFT: "Draft", REVIEW: "In review", APPROVED: "Approved — ready to pay", PROCESSING: "Paying (bank file prepared)", PAID: "Paid", PARTIALLY_PAID: "Partly paid", CANCELLED: "Cancelled",
 };
 
+/* Slice 4: startup bills, revenue, collaborations */
+
+export type InvoiceStatus = "DRAFT" | "ISSUED" | "PART_PAID" | "PAID" | "CANCELLED";
+export interface FinanceInvoice {
+  id: string; number: string; recipientStartupId: string; recipient: { id: string; name: string; code: string | null }; title: string; description: string | null;
+  lines: Array<{ label: string; amountPaise: number }>; amountPaise: number; receivedPaise: number; outstandingPaise: number; isOverdue: boolean;
+  issueDate: string | null; dueDate: string | null; status: InvoiceStatus; flag: "DISPUTED" | "UNDER_RECONCILIATION" | null; flagNote: string | null;
+  billingEmail: string | null; reminderCount: number; lastReminderAt: string | null; maxReminders: number; viewUrl: string;
+  receipts: Array<{ id: string; amountPaise: number; receivedOn: string; reference: string | null; reversedAt: string | null; reverseReason: string | null }>;
+  reminders: Array<{ id: string; sentTo: string; automatic: boolean; level: number; delivery: string; error: string | null; createdAt: string }>;
+}
+export type IncomeSource = "CLIENT_PAYMENT" | "SERVICE_INCOME" | "PROJECT_INCOME" | "SPONSORSHIP" | "PARTNER_CONTRIBUTION" | "EVENT_INCOME" | "GRANT" | "OTHER";
+export const INCOME_LABEL: Record<IncomeSource | "B2B_CLIENT_WORK", string> = {
+  CLIENT_PAYMENT: "Client payment", SERVICE_INCOME: "Service income", PROJECT_INCOME: "Project income", SPONSORSHIP: "Sponsorship",
+  PARTNER_CONTRIBUTION: "Partner contribution", EVENT_INCOME: "Event income", GRANT: "Grant", OTHER: "Other", B2B_CLIENT_WORK: "B2B client work",
+};
+export interface Revenue {
+  receivedPaise: number; bySource: Array<{ source: IncomeSource | "B2B_CLIENT_WORK"; amountPaise: number }>;
+  entries: Array<{ id: string; source: IncomeSource; title: string; payer: string; amountPaise: number; receivedOn: string; reference: string | null; startup: { name: string } | null; collaboration: { name: string } | null }>;
+  b2b: { receivedPaise: number; invoicedNotReceivedPaise: number; payments: Array<{ id: string; amountPaise: number; paidOn: string; reference: string | null; engagement: { title: string; clientCompany: string; code: string } }> };
+}
+export interface Collaboration {
+  id: string; name: string; partnerName: string; status: "PLANNED" | "ACTIVE" | "COMPLETED" | "CANCELLED"; startDate: string | null; endDate: string | null;
+  budgetPaise: number | null; description: string | null; spentPaise: number; committedPaise: number; incomePaise: number; netPaise: number;
+  agreedContributionsPaise?: number; budgetLeftPaise?: number | null;
+  shares: Array<{ id: string; startupId: string; startup: { id: string; name: string }; agreedContributionPaise: number | null; note: string | null }>;
+  costs?: Array<{ id: string; number: string; title: string; amountPaise: number; status: ExpenseStatus; incurredOn: string; startup: { name: string } | null }>;
+  income?: Array<{ id: string; title: string; payer: string; amountPaise: number; receivedOn: string }>;
+}
+
+/* Slice 5: reports */
+export type ReportKind = "summary" | "expenses" | "income" | "payroll" | "budgets" | "subscriptions" | "receivables" | "startups";
+export interface ReportPreview { title: string; notes: string[]; columns: Array<{ key: string; label: string; type?: "text" | "money" | "date" | "number" }>; rows: Array<Record<string, unknown>>; totals?: Record<string, unknown>; from: string; to: string; totalRows: number }
+
 const q = (params: Record<string, string | number | undefined | null>) => {
   const s = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join("&");
   return s ? `?${s}` : "";
@@ -264,6 +298,34 @@ export const financeApi = {
   myPay: () => api.get<MyPay>("/api/finance/me/pay"),
   downloadPayslip: (itemId: string) => downloadFile(`/api/finance/payslips/${itemId}`, "payslip.pdf"),
   downloadStipendStatement: (payoutId: string) => downloadFile(`/api/finance/stipend-statements/${payoutId}`, "stipend-statement.pdf"),
+
+
+  // Startup bills
+  invoices: (scope?: Scope, status?: InvoiceStatus) => api.get<{ invoices: FinanceInvoice[]; totals: { outstandingPaise: number; overduePaise: number; overdueCount: number } }>(`/api/finance/invoices${q({ scope, status })}`),
+  invoice: (id: string) => api.get<FinanceInvoice>(`/api/finance/invoices/${id}`),
+  suggestInvoice: (startupId: string, from: string, to: string) => api.get<Array<{ label: string; amount: string }>>(`/api/finance/invoices/suggest${q({ startupId, from, to })}`),
+  createInvoice: (body: Record<string, unknown>) => api.post<FinanceInvoice>("/api/finance/invoices", body),
+  issueInvoice: (id: string, dueDate?: string) => api.post<FinanceInvoice>(`/api/finance/invoices/${id}/issue`, { dueDate: dueDate || null }),
+  cancelInvoice: (id: string, reason: string) => api.post<FinanceInvoice>(`/api/finance/invoices/${id}/cancel`, { reason }),
+  flagInvoice: (id: string, flag: "DISPUTED" | "UNDER_RECONCILIATION" | null, note?: string) => api.post<FinanceInvoice>(`/api/finance/invoices/${id}/flag`, { flag, note }),
+  recordReceipt: (id: string, body: { amount: string; receivedOn: string; reference?: string; method?: PaymentMethod }) => api.post<FinanceInvoice>(`/api/finance/invoices/${id}/receipts`, body),
+  reverseReceipt: (id: string, receiptId: string, reason: string) => api.post<FinanceInvoice>(`/api/finance/invoices/${id}/receipts/${receiptId}/reverse`, { reason }),
+  remind: (id: string) => api.post<{ level: number; delivery: string; error: string | null }>(`/api/finance/invoices/${id}/remind`, {}),
+  publicBill: (token: string) => api.get<any>(`/api/finance/public/bills/${token}`),
+  // Revenue and collaborations
+  revenue: (p: { scope?: Scope; period?: Period; from?: string; to?: string }) => api.get<Revenue>(`/api/finance/revenue${q(p)}`),
+  addIncome: (body: Record<string, unknown>) => api.post("/api/finance/income", body),
+  voidIncome: (id: string, reason: string) => api.post(`/api/finance/income/${id}/void`, { reason }),
+  collaborations: () => api.get<Collaboration[]>("/api/finance/collaborations"),
+  collaboration: (id: string) => api.get<Collaboration>(`/api/finance/collaborations/${id}`),
+  createCollaboration: (body: Record<string, unknown>) => api.post<Collaboration>("/api/finance/collaborations", body),
+  updateCollaboration: (id: string, body: Record<string, unknown>) => api.patch<Collaboration>(`/api/finance/collaborations/${id}`, body),
+  addCollaborationCost: (id: string, body: Record<string, unknown>) => api.post(`/api/finance/collaborations/${id}/costs`, body),
+
+
+  // Reports
+  report: (kind: ReportKind, p: Record<string, string | undefined>) => api.get<ReportPreview>(`/api/finance/reports/${kind}${q(p)}`),
+  exportReport: (kind: ReportKind, format: "csv" | "xlsx" | "pdf", p: Record<string, string | undefined>) => downloadFile(`/api/finance/reports/${kind}/export${q({ ...p, format })}`, `devup-${kind}.${format}`),
 
   // Staff claims
   myClaims: () => api.get<Array<Expense & { category: { name: string }; startup: { name: string; code: string | null } }>>("/api/finance/me/claims"),

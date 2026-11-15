@@ -3,6 +3,11 @@
 import { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import { Info, X } from "lucide-react";
 import type { ExpenseStatus, FinanceMe, Period, Scope } from "@/lib/api/finance";
+
+const PERIODS: Array<{ value: Period; label: string }> = [
+  { value: "day", label: "Today" }, { value: "week", label: "This week" }, { value: "month", label: "This month" },
+  { value: "quarter", label: "This quarter" }, { value: "year", label: "This financial year" }, { value: "custom", label: "Custom dates" },
+];
 import { STATUS_LABEL, STATUS_TONE } from "@/lib/api/finance";
 
 /* Shared state for every finance page: who is signed in, and what they're looking at. */
@@ -222,6 +227,30 @@ export function MonthColumns({ months, format }: { months: Array<{ month: string
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#c8f135]/70" />Paid</span>
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm border border-sky-400/60" />Approved, still to pay</span>
       </div>
+    </div>
+  );
+}
+
+/** The period choice shared by every finance page (it lives in FinanceContext, so it carries across pages). */
+export function PeriodPicker({ children }: { children?: ReactNode }) {
+  const { period, setPeriod, custom, setCustom } = useFinance();
+  return (
+    <div className="mb-6 flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap gap-1 rounded-lg border border-white/[0.08] p-1">
+        {PERIODS.map((p) => (
+          <button key={p.value} onClick={() => setPeriod(p.value)} className={`rounded-md px-3 py-1.5 text-[12.5px] transition ${period === p.value ? "bg-white/10 text-white" : "text-[#8b8b8b] hover:text-white"}`}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {period === "custom" && (
+        <div className="flex items-center gap-2">
+          <input type="date" aria-label="From" className={`${inputCls} w-auto`} value={custom.from} onChange={(e) => setCustom({ ...custom, from: e.target.value })} />
+          <span className="text-[#6b6b6b]">to</span>
+          <input type="date" aria-label="To" className={`${inputCls} w-auto`} value={custom.to} onChange={(e) => setCustom({ ...custom, to: e.target.value })} />
+        </div>
+      )}
+      {children}
     </div>
   );
 }

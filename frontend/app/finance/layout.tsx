@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, LayoutDashboard, Receipt, Wallet, HandCoins, Lock, Loader2, Building2, PiggyBank, CalendarClock, AppWindow, Users, Banknote, FileText } from "lucide-react";
+import { ArrowLeft, LayoutDashboard, Receipt, Wallet, HandCoins, Lock, Loader2, Building2, PiggyBank, CalendarClock, AppWindow, Users, Banknote, FileText, FileInput, TrendingUp, BarChart3 } from "lucide-react";
 import { financeApi, FinanceMe, Period, Scope } from "@/lib/api/finance";
 import { FinanceContext, heading } from "@/components/finance/ui";
 import "./finance.css";
@@ -20,14 +20,20 @@ const NAV = [
   { href: "/finance", label: "Overview", icon: LayoutDashboard, need: "finance" as const },
   { href: "/finance/expenses", label: "Expenses & claims", icon: Receipt, need: "finance" as const },
   { href: "/finance/budgets", label: "Budgets", icon: PiggyBank, need: "finance" as const },
+  { href: "/finance/invoices", label: "Startup bills", icon: FileInput, need: "finance" as const },
+  { href: "/finance/revenue", label: "Money in", icon: TrendingUp, need: "finance" as const },
   { href: "/finance/bills", label: "Regular bills", icon: CalendarClock, need: "finance" as const },
   { href: "/finance/subscriptions", label: "Subscriptions", icon: AppWindow, need: "finance" as const },
   { href: "/finance/events", label: "Meetings & events", icon: Users, need: "finance" as const },
   { href: "/finance/pay", label: "Salaries & stipends", icon: Wallet, need: "pay" as const },
   { href: "/finance/payroll", label: "Payroll", icon: Banknote, need: "pay" as const },
+  { href: "/finance/reports", label: "Reports", icon: BarChart3, need: "finance" as const },
   { href: "/finance/my-claims", label: "My expense claims", icon: HandCoins, need: "claims" as const },
   { href: "/finance/my-pay", label: "My pay", icon: FileText, need: "claims" as const },
 ];
+
+/** On this page or one beneath it — /finance/pay must not light up on /finance/payroll. */
+const isActive = (pathname: string, href: string) => (href === "/finance" ? pathname === "/finance" : pathname === href || pathname.startsWith(`${href}/`));
 
 /** The phone tab bar has room for five; the rest are on each page's links. */
 const MOBILE_TABS = ["/finance", "/finance/expenses", "/finance/budgets", "/finance/pay", "/finance/my-claims"];
@@ -125,7 +131,7 @@ export default function FinanceLayout({ children }: { children: React.ReactNode 
             )}
             <nav className="flex-1 space-y-1 px-3 py-4">
               {nav.map(({ href, label, icon: Icon }) => {
-                const active = href === "/finance" ? pathname === "/finance" : pathname.startsWith(href);
+                const active = isActive(pathname, href);
                 return (
                   <Link key={href} href={href} className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13.5px] transition ${active ? "bg-[#c8f135]/10 text-[#c8f135]" : "text-[#8b8b8b] hover:bg-white/5 hover:text-[#e4e4e4]"}`}>
                     <Icon className="h-4 w-4 shrink-0" />
@@ -144,7 +150,7 @@ export default function FinanceLayout({ children }: { children: React.ReactNode 
           {/* Mobile: the scope picker on top, tabs at the bottom. */}
           <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex border-t border-white/10 bg-[#0d0d0d] pb-[env(safe-area-inset-bottom)]">
             {nav.filter((n) => MOBILE_TABS.includes(n.href)).map(({ href, label, icon: Icon }) => {
-              const active = href === "/finance" ? pathname === "/finance" : pathname.startsWith(href);
+              const active = isActive(pathname, href);
               return (
                 <Link key={href} href={href} className={`flex flex-1 flex-col items-center gap-1 py-3 text-[9.5px] ${active ? "text-[#c8f135]" : "text-[#6b6b6b]"}`}>
                   <Icon className="h-4 w-4" />

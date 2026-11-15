@@ -6,6 +6,8 @@ import { headcounts } from "./expenses.service";
 import { budgetSnapshot } from "./budgets.service";
 import { monthlySubscriptions } from "./subscriptions.service";
 import { payDue } from "./payroll.service";
+import { expectedFromStartups } from "./invoices.service";
+import { moneyReceived } from "./revenue.service";
 
 /**
  * Numbers for the CFO dashboard. Every figure is read from real records; a
@@ -120,8 +122,10 @@ export async function overview(access: FinanceAccess, q: { scope?: string; perio
       // A startup's own spending plus its share of shared costs. Ecosystem view: each cost once.
       ...(singleStartup ? { sharedCostSharePaise: get0(shareBy, singleStartup) } : {}),
       // Modules not built yet: null means "not tracked yet", never zero.
-      moneyReceivedPaise: null,
-      expectedFromStartupsPaise: null,
+      // Cash actually received from outside DevUp in the period (never internal startup payments).
+      moneyReceivedPaise: await moneyReceived(access, q.scope, from, to),
+      // What startups still owe on DevUp's bills (internal).
+      expectedFromStartupsPaise: await expectedFromStartups(access, q.scope),
       monthlySubscriptionsPaise: await monthlySubscriptions(access, q.scope),
       cashBalancePaise: null,
     },

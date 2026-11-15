@@ -221,28 +221,31 @@ model Startup {
 
   // Short immutable tenant code used in every generated number (e.g. "ZAP").
   // Nullable only for backfill of pre-existing rows; treated as required in app logic.
-  code               String?                 @unique
-  branding           StartupBranding?
-  employees          Employee[]
-  interns            Intern[]
-  sequences          NumberSequence[]
-  hrDocuments        HrDocument[]
-  offerLetters       OfferLetter[]
-  stageEvents        ApplicationStageEvent[]
-  interviews         Interview[]
-  onboardingDocs     OnboardingDocument[]
-  onboardingReqs     OnboardingRequirement[]
-  attendancePolicy   AttendancePolicy?
-  stipendPayouts     StipendPayout[]
-  partner            Partner?
-  financeRoles       FinanceRole[]
-  expenses           Expense[]               @relation("ExpenseStartup")
-  expenseAllocations ExpenseAllocation[]     @relation("AllocationStartup")
-  budgets            Budget[]                @relation("BudgetStartup")
-  recurringBills     RecurringBill[]         @relation("RecurringBillStartup")
-  subscriptions      Subscription[]          @relation("SubscriptionStartup")
-  financeEvents      FinanceEvent[]          @relation("FinanceEventStartup")
-  payrollRuns        PayrollRun[]            @relation("PayrollRunStartup")
+  code                String?                 @unique
+  branding            StartupBranding?
+  employees           Employee[]
+  interns             Intern[]
+  sequences           NumberSequence[]
+  hrDocuments         HrDocument[]
+  offerLetters        OfferLetter[]
+  stageEvents         ApplicationStageEvent[]
+  interviews          Interview[]
+  onboardingDocs      OnboardingDocument[]
+  onboardingReqs      OnboardingRequirement[]
+  attendancePolicy    AttendancePolicy?
+  stipendPayouts      StipendPayout[]
+  partner             Partner?
+  financeRoles        FinanceRole[]
+  expenses            Expense[]               @relation("ExpenseStartup")
+  expenseAllocations  ExpenseAllocation[]     @relation("AllocationStartup")
+  budgets             Budget[]                @relation("BudgetStartup")
+  recurringBills      RecurringBill[]         @relation("RecurringBillStartup")
+  subscriptions       Subscription[]          @relation("SubscriptionStartup")
+  financeEvents       FinanceEvent[]          @relation("FinanceEventStartup")
+  payrollRuns         PayrollRun[]            @relation("PayrollRunStartup")
+  financeInvoices     FinanceInvoice[]        @relation("InvoiceRecipient")
+  incomeEntries       IncomeEntry[]           @relation("IncomeStartup")
+  collaborationShares CollaborationShare[]    @relation("CollaborationShareStartup")
 }
 
 enum StartupMemberRole {
@@ -2990,4 +2993,172 @@ model PayrollItem {
 
   @@unique([employeeId, periodStart])
   @@index([runId])
+}
+
+// ── Finance, slice 4: startup bills and reminders, revenue, collaborations ─
+
+enum FinanceInvoiceStatus {
+  DRAFT
+  ISSUED
+  PART_PAID
+  PAID
+  CANCELLED
+}
+
+/// A bill from central DevUp to one of its startups (shared rent, tools, staff…).
+/// Internal: what a startup pays here moves money inside DevUp — it is never
+/// counted as DevUp revenue, and the costs it recovers were counted once already.
+model FinanceInvoice {
+  id                 String               @id @default(uuid())
+  number             String               @unique
+  recipientStartupId String
+  recipient          Startup              @relation("InvoiceRecipient", fields: [recipientStartupId], references: [id], onDelete: Restrict)
+  title              String
+  description        String?
+  /// [{ label, amountPaise }]
+  lines              Json
+  amountPaise        Int
+  receivedPaise      Int                  @default(0)
+  issueDate          DateTime?            @db.Date
+  dueDate            DateTime?            @db.Date
+  periodStart        DateTime?            @db.Date
+  periodEnd          DateTime?            @db.Date
+  status             FinanceInvoiceStatus @default(DRAFT)
+  /// DISPUTED or UNDER_RECONCILIATION pause reminders; null is normal.
+  flag               String?
+  flagNote           String?
+  /// Who reminders go to. Empty: the startup's active founders and owners.
+  billingEmail       String?
+  /// Unguessable link for the startup to view this bill without a finance role.
+  viewToken          String               @unique
+  reminderCount      Int                  @default(0)
+  lastReminderAt     DateTime?
+  maxReminders       Int                  @default(4)
+  createdBy          String
+  cancelledAt        DateTime?
+  cancelReason       String?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  receipts  InvoiceReceipt[]
+  reminders PaymentReminder[]
+
+  @@index([recipientStartupId, status])
+  @@index([status, dueDate])
+}
+
+/// Money received against a startup bill. Reversed, never deleted.
+model InvoiceReceipt {
+  id            String         @id @default(uuid())
+  invoiceId     String
+  invoice       FinanceInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  amountPaise   Int
+  receivedOn    DateTime       @db.Date
+  method        PaymentMethod?
+  reference     String?
+  note          String?
+  recordedBy    String
+  createdAt     DateTime       @default(now())
+  reversedAt    DateTime?
+  reversedBy    String?
+  reverseReason String?
+
+  @@index([invoiceId])
+}
+
+/// Every reminder sent for a bill, with what happened to the email.
+model PaymentReminder {
+  id        String         @id @default(uuid())
+  invoiceId String
+  invoice   FinanceInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  sentTo    String
+  sentBy    String
+  automatic Boolean        @default(false)
+  /// 1 = first reminder, 2 = second… shown as the escalation level.
+  level     Int
+  /// SENT, QUEUED, FAILED or SKIPPED (email switched off on this server).
+  delivery  String
+  error     String?
+  createdAt DateTime       @default(now())
+
+  @@index([invoiceId, createdAt])
+}
+
+enum IncomeSource {
+  CLIENT_PAYMENT
+  SERVICE_INCOME
+  PROJECT_INCOME
+  SPONSORSHIP
+  PARTNER_CONTRIBUTION
+  EVENT_INCOME
+  GRANT
+  OTHER
+}
+
+/// Money actually received from outside DevUp (cash basis). Invoiced-but-unpaid
+/// amounts are not income until received. B2B client payments live in Payment and
+/// are read alongside these, not copied.
+model IncomeEntry {
+  id              String         @id @default(uuid())
+  startupId       String?
+  startup         Startup?       @relation("IncomeStartup", fields: [startupId], references: [id], onDelete: Restrict)
+  source          IncomeSource
+  title           String
+  payer           String
+  amountPaise     Int
+  currency        String         @default("INR")
+  receivedOn      DateTime       @db.Date
+  method          PaymentMethod?
+  reference       String?
+  collaborationId String?
+  collaboration   Collaboration? @relation(fields: [collaborationId], references: [id], onDelete: Restrict)
+  notes           String?
+  createdBy       String
+  createdAt       DateTime       @default(now())
+  voidedAt        DateTime?
+  voidedBy        String?
+  voidReason      String?
+
+  @@index([startupId, receivedOn])
+}
+
+enum CollaborationStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+/// A joint project with a partner and one or more startups. Its costs are
+/// Expenses with source COLLABORATION; its income is IncomeEntry rows.
+model Collaboration {
+  id          String              @id @default(uuid())
+  name        String
+  partnerName String
+  partnerId   String?
+  agreementId String?
+  status      CollaborationStatus @default(ACTIVE)
+  startDate   DateTime?           @db.Date
+  endDate     DateTime?           @db.Date
+  budgetPaise Int?
+  description String?
+  createdBy   String
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  shares CollaborationShare[]
+  income IncomeEntry[]
+}
+
+/// A startup's part in a collaboration and what it agreed to put in.
+model CollaborationShare {
+  id                      String        @id @default(uuid())
+  collaborationId         String
+  collaboration           Collaboration @relation(fields: [collaborationId], references: [id], onDelete: Cascade)
+  startupId               String
+  startup                 Startup       @relation("CollaborationShareStartup", fields: [startupId], references: [id], onDelete: Restrict)
+  agreedContributionPaise Int?
+  note                    String?
+
+  @@unique([collaborationId, startupId])
 }

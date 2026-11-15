@@ -3,23 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, Building, Users2, Coffee, Receipt, Wallet, CheckCircle2, AlertTriangle } from "lucide-react";
-import { financeApi, inr, Overview, Period } from "@/lib/api/finance";
-import { Bars, Button, Empty, ErrorNote, MonthColumns, PageHeader, Panel, StatCard, StatusPill, Tip, inputCls, useFinance } from "@/components/finance/ui";
+import { financeApi, inr, Overview } from "@/lib/api/finance";
+import { Bars, Button, Empty, ErrorNote, MonthColumns, PageHeader, Panel, PeriodPicker, StatCard, StatusPill, Tip, useFinance } from "@/components/finance/ui";
 import ExpenseForm from "@/components/finance/ExpenseForm";
-
-const PERIODS: Array<{ value: Period; label: string }> = [
-  { value: "day", label: "Today" },
-  { value: "week", label: "This week" },
-  { value: "month", label: "This month" },
-  { value: "quarter", label: "This quarter" },
-  { value: "year", label: "This financial year" },
-  { value: "custom", label: "Custom dates" },
-];
 
 const fmtDate = (d: string) => new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
 export default function FinanceOverviewPage() {
-  const { me, scope, scopeName, period, setPeriod, custom, setCustom } = useFinance();
+  const { me, scope, scopeName, period, custom } = useFinance();
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<null | { category?: string; title?: string }>(null);
@@ -45,23 +36,9 @@ export default function FinanceOverviewPage() {
         {canAdd && <Button kind="primary" onClick={() => setForm({})}><Plus className="h-4 w-4" />Add expense</Button>}
       </PageHeader>
 
-      <div className="mb-6 flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap gap-1 rounded-lg border border-white/[0.08] p-1">
-          {PERIODS.map((p) => (
-            <button key={p.value} onClick={() => setPeriod(p.value)} className={`rounded-md px-3 py-1.5 text-[12.5px] transition ${period === p.value ? "bg-white/10 text-white" : "text-[#8b8b8b] hover:text-white"}`}>
-              {p.label}
-            </button>
-          ))}
-        </div>
-        {period === "custom" && (
-          <div className="flex items-center gap-2">
-            <input type="date" aria-label="From" className={`${inputCls} w-auto`} value={custom.from} onChange={(e) => setCustom({ ...custom, from: e.target.value })} />
-            <span className="text-[#6b6b6b]">to</span>
-            <input type="date" aria-label="To" className={`${inputCls} w-auto`} value={custom.to} onChange={(e) => setCustom({ ...custom, to: e.target.value })} />
-          </div>
-        )}
+      <PeriodPicker>
         {data && <span className="text-[12px] text-[#6b6b6b]">{fmtDate(data.period.from)} – {fmtDate(data.period.to)}</span>}
-      </div>
+      </PeriodPicker>
 
       <ErrorNote message={error} />
 
@@ -116,8 +93,8 @@ function OverviewCards({ data, single }: { data: Overview; single: boolean }) {
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <BudgetCard budget={data.budget} />
-        <NotYet label="Money received" hint="Income and receipts arrive with the revenue module." />
-        <NotYet label="Money expected from startups" hint="What startups owe DevUp (shared rent, tools) arrives with startup bills and reminders." />
+        <SmallFigure label="Money received" value={c.moneyReceivedPaise} empty="None recorded" href="/finance/revenue" hint="Money that arrived from outside DevUp in this period. Startups paying DevUp's bills is internal and not included." />
+        <SmallFigure label="Money expected from startups" value={c.expectedFromStartupsPaise} empty="No open bills" href="/finance/invoices" hint="What startups still owe on bills DevUp has sent them." />
         <SmallFigure label="Monthly subscriptions" value={c.monthlySubscriptionsPaise} empty="None recorded" href="/finance/subscriptions" hint="What active software subscriptions cost in an average month. Yearly plans are divided by 12." />
         <NotYet label="Cash in bank" hint="Shown only once a bank balance is recorded with its date. DevUp has no bank connection, so it is never guessed." />
       </div>

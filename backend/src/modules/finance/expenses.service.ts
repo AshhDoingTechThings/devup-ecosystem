@@ -263,7 +263,7 @@ function cleanDates(input: Partial<ExpenseInput>, data: ExpenseData) {
 const scopeFrom = (scope: string) => (scope === "central" ? null : scope);
 
 /** Where an expense came from, set by the module that creates it (never by the request body). */
-export type ExpenseOrigin = { source: "EVENT" | "SUBSCRIPTION" | "RECURRING_BILL"; sourceId: string };
+export type ExpenseOrigin = { source: "EVENT" | "SUBSCRIPTION" | "RECURRING_BILL" | "COLLABORATION"; sourceId: string };
 
 export async function createExpense(access: FinanceAccess, input: ExpenseInput, origin?: ExpenseOrigin) {
   const startupId = scopeFrom(input.scope);
