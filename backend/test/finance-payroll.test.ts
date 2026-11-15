@@ -6,7 +6,6 @@
 import "./support/finance-env";
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID, createHash } from "node:crypto";
 import { startHarness, testDatabaseUrl, Person } from "./support/harness";
 // Pure modules only before startHarness().
 import { monthPeriod, overlapDays, salaryForMonth, stipendForMonth, netPay } from "../src/modules/finance/payrollMath";
@@ -61,7 +60,6 @@ if (!DB) {
       put: (path: string, body: unknown) => h.call("PUT", F(path), p.token, body),
     });
     const expect = (r: { status: number; body: any }, status: number) => assert.equal(r.status, status, JSON.stringify(r.body));
-    const sha = (s: string) => createHash("sha256").update(s).digest("hex");
     let n = 0;
     const employee = (name: string, extra: Record<string, unknown> = {}) =>
       h.prisma.employee.create({ data: { startupId: A.id, employeeCode: `E-${++n}-${h.uniq()}`, fullName: name, email: `e${n}-${h.uniq()}@x.test`, designation: "Engineer", employmentType: "FULL_TIME", joinedAt: D("2026-01-01"), ...extra } });
