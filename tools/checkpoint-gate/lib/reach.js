@@ -188,12 +188,14 @@ function serverRoutes(root) {
   for (const m of src.matchAll(routeCalls(src, 'app'))) for (const p of strings(m[2])) routes.push([m[1].toUpperCase(), p]);
 
   // Routers imported from modules/, by local name.
+  // import X from "…", import { A, B as C } from "…", and import X, { A } from "…".
   const imported = new Map();
-  for (const m of src.matchAll(/import\s+([A-Za-z_$][\w$]*)\s+from\s+["']([^"']+)["']/g)) imported.set(m[1], { from: m[2], name: 'default' });
-  for (const m of src.matchAll(/import\s*\{([^}]*)\}\s*from\s+["']([^"']+)["']/g)) {
-    for (const part of m[1].split(',')) {
+  for (const m of src.matchAll(/import\s+(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*from\s+["']([^"']+)["']/g)) {
+    const [, def, named, from] = m;
+    if (def) imported.set(def, { from, name: 'default' });
+    for (const part of (named || '').split(',')) {
       const [orig, local] = part.trim().split(/\s+as\s+/);
-      if (orig) imported.set(local || orig, { from: m[2], name: orig });
+      if (orig) imported.set(local || orig, { from, name: orig });
     }
   }
 
