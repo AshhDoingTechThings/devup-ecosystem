@@ -74,9 +74,10 @@ export interface Overview {
     waitingApprovalPaise: number; waitingApprovalCount: number;
     claimsOpenPaise: number; claimsOpenCount: number;
     sharedCostSharePaise?: number;
-    budgetAllocatedPaise: number | null; moneyReceivedPaise: number | null; expectedFromStartupsPaise: number | null;
+    moneyReceivedPaise: number | null; expectedFromStartupsPaise: number | null;
     monthlySubscriptionsPaise: number | null; cashBalancePaise: number | null;
   };
+  budget: null | (MoneyFigures & { count: number; overCount: number });
   payroll: null | {
     monthlySalariesPaise: number; employees: number; employeesWithoutConfirmedPay: number;
     monthlyStipendsPaise: number; internsNow: number; internsWithoutConfirmedStipend: number;
@@ -109,6 +110,49 @@ export interface PaySetup {
   summary: { employees: number; employeesConfirmed: number; interns: number; internsConfirmed: number; internsEndedButActive: number; withoutBankDetails: number };
 }
 export interface Bank { id: string; accountHolder: string; accountLast4: string; ifsc: string; bankName: string | null; hasUpi: boolean; addedAt: string }
+
+
+/* Slice 2: budgets, recurring bills, subscriptions, events */
+
+export type BudgetScope = "ECOSYSTEM" | "CENTRAL" | "STARTUP";
+export type BudgetPeriod = "WEEKLY" | "MONTHLY" | "QUARTERLY" | "YEARLY" | "CUSTOM";
+export interface MoneyFigures { allocatedPaise: number; spentPaise: number; committedPaise: number; availablePaise: number; usedPercent: number; over: boolean }
+export interface Budget {
+  id: string; name: string; scope: BudgetScope; startup: { id: string; name: string } | null; purpose: string | null; period: BudgetPeriod;
+  periodStart: string; periodEnd: string; approvalLimitPaise: number | null; notes: string | null; version: number; archivedAt: string | null;
+  totals: MoneyFigures;
+  lines: Array<MoneyFigures & { id: string; categoryGroup: string | null; note: string | null }>;
+  unbudgeted: Array<{ group: string; spentPaise: number; committedPaise: number }>;
+  sharedCostSharePaise: number | null;
+  history?: Array<{ at: string; action: string; by: string | null; details: any }>;
+}
+export type Frequency = "WEEKLY" | "MONTHLY" | "QUARTERLY" | "YEARLY";
+export interface RecurringBill {
+  id: string; startupId: string | null; startup: { name: string } | null; title: string; categoryId: string; payee: string | null; amountPaise: number;
+  frequency: Frequency; dueDay: number; startsOn: string; endsOn: string | null; leadDays: number; autoApprove: boolean; isActive: boolean; notes: string | null;
+  nextDue: string | null; recent: Array<{ dueDate: string; expense: { id: string; number: string; status: ExpenseStatus; amountPaise: number } | null }>;
+}
+export interface Subscription {
+  id: string; startupId: string | null; startup: { name: string } | null; name: string; provider: string; plan: string | null; billingCycle: Frequency;
+  costPaise: number; monthlyPaise: number; seatsPurchased: number | null; seatsAssigned: number; seatsUnassigned: number | null; renewalOn: string | null;
+  paymentMethodNote: string | null; status: "ACTIVE" | "PAUSED" | "CANCELLED"; cancelledAt: string | null; notes: string | null;
+  seats: Array<{ id: string; userId: string | null; name: string | null; email: string | null; assignedAt: string }>;
+  charges?: Array<{ id: string; number: string; amountPaise: number; status: ExpenseStatus; incurredOn: string }>;
+}
+export interface SubAlert { kind: "RENEWAL_SOON" | "UNASSIGNED_SEATS" | "CHARGED_AFTER_CANCEL" | "COST_INCREASE" | "POSSIBLE_DUPLICATE"; subscriptionId: string; name: string; message: string }
+export type EventKind = "TEAM_MEETING" | "STARTUP_MEETING" | "FOUNDER_MEETING" | "INVESTOR_MEETING" | "CLIENT_MEETING" | "TEAM_EVENT" | "WORKSHOP" | "TRAVEL" | "OTHER";
+export interface FinanceEvent {
+  id: string; startupId: string | null; startup: { name: string } | null; name: string; kind: EventKind; date: string; startTime: string | null;
+  purpose: string | null; location: string | null; participants: Array<{ userId: string | null; name: string }>; status: "PLANNED" | "DONE" | "CANCELLED";
+  totalPaise: number; paidPaise: number; pendingPaise: number; costCount: number; waitingApproval: number;
+  costs?: Array<{ id: string; number: string; title: string; amountPaise: number; status: ExpenseStatus; category: { name: string }; payee: string | null }>;
+}
+
+export const EVENT_KIND_LABEL: Record<EventKind, string> = {
+  TEAM_MEETING: "Team meeting", STARTUP_MEETING: "Startup meeting", FOUNDER_MEETING: "Founder meeting", INVESTOR_MEETING: "Investor meeting",
+  CLIENT_MEETING: "Client meeting", TEAM_EVENT: "Team get-together", WORKSHOP: "Workshop", TRAVEL: "Travel", OTHER: "Other",
+};
+export const FREQ_LABEL: Record<Frequency, string> = { WEEKLY: "Every week", MONTHLY: "Every month", QUARTERLY: "Every 3 months", YEARLY: "Every year" };
 
 const q = (params: Record<string, string | number | undefined | null>) => {
   const s = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join("&");
@@ -145,6 +189,35 @@ export const financeApi = {
     return apiClient<any>(claim ? `/api/finance/me/claims/${id}/attachments` : `/api/finance/expenses/${id}/attachments`, { method: "POST", body: fd });
   },
   fileLink: (attachmentId: string) => api.get<{ url: string; fileName: string | null }>(`/api/finance/attachments/${attachmentId}/link`),
+
+
+  // Budgets
+  budgets: (scope?: Scope, current?: boolean) => api.get<Budget[]>(`/api/finance/budgets${q({ scope, current: current ? 1 : undefined })}`),
+  budget: (id: string) => api.get<Budget>(`/api/finance/budgets/${id}`),
+  budgetGroups: () => api.get<string[]>("/api/finance/budgets/groups"),
+  createBudget: (body: Record<string, unknown>) => api.post<Budget>("/api/finance/budgets", body),
+  reviseBudget: (id: string, body: Record<string, unknown>) => api.patch<Budget>(`/api/finance/budgets/${id}`, body),
+  archiveBudget: (id: string) => api.post<Budget>(`/api/finance/budgets/${id}/archive`, {}),
+  // Recurring bills
+  recurring: (scope?: Scope) => api.get<RecurringBill[]>(`/api/finance/recurring${q({ scope })}`),
+  createRecurring: (body: Record<string, unknown>) => api.post<RecurringBill>("/api/finance/recurring", body),
+  updateRecurring: (id: string, body: Record<string, unknown>) => api.patch<RecurringBill>(`/api/finance/recurring/${id}`, body),
+  generateRecurring: () => api.post<{ created: Array<{ number: string }> }>("/api/finance/recurring/generate", {}),
+  // Subscriptions
+  subscriptions: (scope?: Scope) => api.get<{ subscriptions: Subscription[]; totals: { activeCount: number; monthlyPaise: number; yearlyPaise: number }; alerts: SubAlert[] }>(`/api/finance/subscriptions${q({ scope })}`),
+  subscription: (id: string) => api.get<Subscription>(`/api/finance/subscriptions/${id}`),
+  seatUsage: (scope?: Scope) => api.get<Array<{ subscriptionId: string; software: string; provider: string; plan: string | null; renewalOn: string | null; startup: string; person: string | null; email: string | null }>>(`/api/finance/subscriptions/usage${q({ scope })}`),
+  createSubscription: (body: Record<string, unknown>) => api.post<Subscription>("/api/finance/subscriptions", body),
+  updateSubscription: (id: string, body: Record<string, unknown>) => api.patch<Subscription>(`/api/finance/subscriptions/${id}`, body),
+  assignSeat: (id: string, body: { userId?: string; name?: string; email?: string }) => api.post(`/api/finance/subscriptions/${id}/seats`, body),
+  removeSeat: (seatId: string) => api.delete(`/api/finance/subscriptions/seats/${seatId}`),
+  recordCharge: (id: string, body: { amount?: string; on: string; paid?: boolean; paymentRef?: string }) => api.post(`/api/finance/subscriptions/${id}/charges`, body),
+  // Events
+  events: (scope?: Scope) => api.get<FinanceEvent[]>(`/api/finance/events${q({ scope })}`),
+  event: (id: string) => api.get<FinanceEvent>(`/api/finance/events/${id}`),
+  createEvent: (body: Record<string, unknown>) => api.post<FinanceEvent>("/api/finance/events", body),
+  updateEvent: (id: string, body: Record<string, unknown>) => api.patch<FinanceEvent>(`/api/finance/events/${id}`, body),
+  addEventCost: (id: string, body: Record<string, unknown>) => api.post<Expense>(`/api/finance/events/${id}/costs`, body),
 
   // Staff claims
   myClaims: () => api.get<Array<Expense & { category: { name: string }; startup: { name: string; code: string | null } }>>("/api/finance/me/claims"),

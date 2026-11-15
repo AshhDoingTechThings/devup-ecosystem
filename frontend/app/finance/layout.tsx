@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, LayoutDashboard, Receipt, Wallet, HandCoins, Lock, Loader2, Building2 } from "lucide-react";
+import { ArrowLeft, LayoutDashboard, Receipt, Wallet, HandCoins, Lock, Loader2, Building2, PiggyBank, CalendarClock, AppWindow, Users } from "lucide-react";
 import { financeApi, FinanceMe, Period, Scope } from "@/lib/api/finance";
 import { FinanceContext, heading } from "@/components/finance/ui";
 import "./finance.css";
@@ -19,9 +19,16 @@ import "./finance.css";
 const NAV = [
   { href: "/finance", label: "Overview", icon: LayoutDashboard, need: "finance" as const },
   { href: "/finance/expenses", label: "Expenses & claims", icon: Receipt, need: "finance" as const },
+  { href: "/finance/budgets", label: "Budgets", icon: PiggyBank, need: "finance" as const },
+  { href: "/finance/bills", label: "Regular bills", icon: CalendarClock, need: "finance" as const },
+  { href: "/finance/subscriptions", label: "Subscriptions", icon: AppWindow, need: "finance" as const },
+  { href: "/finance/events", label: "Meetings & events", icon: Users, need: "finance" as const },
   { href: "/finance/pay", label: "Salaries & stipends", icon: Wallet, need: "pay" as const },
   { href: "/finance/my-claims", label: "My expense claims", icon: HandCoins, need: "claims" as const },
 ];
+
+/** The phone tab bar has room for five; the rest are on each page's links. */
+const MOBILE_TABS = ["/finance", "/finance/expenses", "/finance/budgets", "/finance/pay", "/finance/my-claims"];
 
 export default function FinanceLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -85,7 +92,8 @@ export default function FinanceLayout({ children }: { children: React.ReactNode 
     );
   }
 
-  const financePage = pathname === "/finance" || pathname.startsWith("/finance/expenses") || pathname.startsWith("/finance/pay");
+  // Everything except "My expense claims" needs a finance role.
+  const financePage = pathname === "/finance" || (pathname.startsWith("/finance/") && !pathname.startsWith("/finance/my-claims"));
   if (financePage && !hasFinance) {
     return (
       <Shell>
@@ -133,7 +141,7 @@ export default function FinanceLayout({ children }: { children: React.ReactNode 
 
           {/* Mobile: the scope picker on top, tabs at the bottom. */}
           <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex border-t border-white/10 bg-[#0d0d0d] pb-[env(safe-area-inset-bottom)]">
-            {nav.map(({ href, label, icon: Icon }) => {
+            {nav.filter((n) => MOBILE_TABS.includes(n.href)).map(({ href, label, icon: Icon }) => {
               const active = href === "/finance" ? pathname === "/finance" : pathname.startsWith(href);
               return (
                 <Link key={href} href={href} className={`flex flex-1 flex-col items-center gap-1 py-3 text-[9.5px] ${active ? "text-[#c8f135]" : "text-[#6b6b6b]"}`}>

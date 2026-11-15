@@ -2,7 +2,11 @@
 
 DevUp's finance records: expenses, shared costs, staff claims, pay setup and bank details, for central DevUp and every startup. The UI is `/finance` on the main site. Finance roles are managed in the admin portal under **Finance Access**.
 
-This is slice 1. Budgets, payroll runs, recurring bills, subscriptions, startup invoices and reminders, revenue, collaborations and report exports come in later slices.
+Built so far:
+- **Slice 1:** roles, expenses, shared costs, claims, pay setup, dashboard.
+- **Slice 2:** budgets, regular (recurring) bills, subscriptions and seats, meetings and events, and the daily job.
+
+Still to come: payroll and stipend runs, startup invoices and reminders, revenue and collaborations, report exports.
 
 ## Ideas that hold everything together
 
@@ -57,6 +61,18 @@ Every route needs a signed-in user. Pay and bank routes are CFO-only; role route
 | PUT | `/pay/employees/:id/compensation` | CFO | Confirm monthly pay from a date (components must add up). Previous pay is closed, not overwritten |
 | PUT | `/pay/interns/:id/stipend` | CFO | Confirm monthly stipend (whole rupees, 0 = unpaid). Written to `Intern.stipendAmount` |
 | PUT | `/pay/bank` | CFO | Save bank details (encrypted). The previous account is kept, deactivated |
+| GET | `/budgets?scope=&current=1` · `/budgets/:id` · `/budgets/groups` | finance (budget's scope) | Budgets with allocated / spent / committed / available, per line; spending groups |
+| POST · PATCH | `/budgets` · `/budgets/:id` | CFO | Create · change (changing amounts needs a `reason`; `version` increments) |
+| POST | `/budgets/:id/archive` | CFO | Archive |
+| GET · POST · PATCH | `/recurring` · `/recurring/:id` | finance · can manage scope | Regular bills. `autoApprove` is CFO-only |
+| POST | `/recurring/generate` | can manage | Create every due bill now (the daily job does this too); never duplicates |
+| GET | `/subscriptions?scope=` · `/subscriptions/:id` · `/subscriptions/usage` | finance | List with monthly cost and alerts · detail with seats and payments · who uses what |
+| POST · PATCH | `/subscriptions` · `/subscriptions/:id` | can manage scope | Create · edit or cancel (`status: CANCELLED`). Full card numbers refused |
+| POST · DELETE | `/subscriptions/:id/seats` · `/subscriptions/seats/:id` | can manage | Assign or remove a seat |
+| POST | `/subscriptions/:id/charges` | can manage | Record a payment (becomes an expense; the renewal moves on a cycle) |
+| GET · POST · PATCH | `/events` · `/events/:id` | finance · can manage | Meetings and events, with totals |
+| POST | `/events/:id/costs` | can manage | Add a cost (an expense with source EVENT) |
+| POST | `/cron/daily` | scheduler (header `x-cron-secret`) | Create due bills; one digest a day to the CFO |
 | GET / POST | `/roles` | SUPER_ADMIN | List · grant |
 | POST | `/roles/:id/revoke` | SUPER_ADMIN | Revoke (kept on record) |
 | GET | `/roles/candidates?q=` · `/roles/startups` · `/roles/log` | SUPER_ADMIN | Pick a verified account · all startups · access log |
@@ -78,7 +94,13 @@ The script:
 - seeds 29 categories
 - installs two guards: finance audit entries are immutable, and expenses are never deleted (a paid expense is final)
 
-Rollback: `scripts/2026_finance_foundation_rollback.sql` refuses while any finance record exists.
+Then slice 2, which needs the foundation first:
+
+```bash
+psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f backend/scripts/2026_finance_slice2.sql
+```
+
+Rollbacks (`*_rollback.sql`) refuse while their records exist. Roll back in reverse order: slice 2, then the foundation.
 
 Verified on a local copy built from `main`'s schema, with production's default privileges:
 - applies twice cleanly
@@ -91,13 +113,18 @@ Verified on a local copy built from `main`'s schema, with production's default p
 
 1. Create the **private** Supabase bucket `finance-documents` (or set `STORAGE_BUCKET_FINANCE`). It must not be public.
 2. Make sure `CREDENTIAL_ENCRYPTION_KEY` is set on the backend (64 hex chars). Without it, bank details are refused (503), never stored in plain text.
-3. Back up, then apply `2026_finance_foundation.sql` (above).
+3. Back up, then apply `2026_finance_foundation.sql`, then `2026_finance_slice2.sql` (above).
 4. Deploy the backend (Render: Manual Deploy), then the frontend (Vercel) and the admin portal.
-5. The CFO verifies their email and signs in once.
-6. A super admin (not the CFO) opens Admin → Finance Access and gives them the CFO role.
-7. The CFO confirms pay in **Salaries & stipends** and starts recording this month's bills.
+5. Set `FINANCE_CRON_SECRET` on the backend (24+ random characters). Create a Render cron job that runs daily, e.g. at 07:30 IST:
+   `curl -fsS -X POST -H "x-cron-secret: $FINANCE_CRON_SECRET" https://<backend>/api/finance/cron/daily`
+   It creates due regular bills and sends the CFO one digest a day. Running it twice does nothing extra.
+6. The CFO verifies their email and signs in once.
+7. A super admin (not the CFO) opens Admin → Finance Access and gives them the CFO role.
+8. The CFO confirms pay in **Salaries & stipends**, adds regular bills and subscriptions, and sets this month's budgets.
 
 ## Tests
+
+`backend/test/finance-slice2.test.ts` covers budgets (hand-worked spent, committed and available, a startup's share of shared costs), recurring due dates and duplicate-safe creation, the daily job's secret and digest, subscriptions, seats and alerts, and events.
 
 `backend/test/finance.test.ts` covers roles, scope isolation, the expense workflow, idempotent payment, corrections, races, cost splitting to the paisa, dashboard totals (no double counting), claims, file handling, pay setup and bank encryption. Run with a local database:
 

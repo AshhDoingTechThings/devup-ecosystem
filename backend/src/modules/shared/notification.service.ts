@@ -16,7 +16,11 @@ export type NotifyEvent =
   | "SELECTED"
   | "OFFER_GENERATED"
   | "OFFER_ACCEPTED"
-  | "JOINED";
+  | "JOINED"
+  // Finance portal
+  | "FINANCE_BILLS_DUE"
+  | "FINANCE_RENEWALS"
+  | "FINANCE_PAYMENT_REMINDER";
 
 interface NotifyArgs {
   userId?: string;

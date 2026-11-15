@@ -85,7 +85,7 @@ async function scopeCode(tx: Prisma.TransactionClient, startupId: string | null)
 }
 
 /** EXP-ZAP-2026-27-0001 — per scope, per Indian financial year. Atomic, like lib/numbering. */
-async function nextExpenseNumber(tx: Prisma.TransactionClient, startupId: string | null, on: Date) {
+export async function nextExpenseNumber(tx: Prisma.TransactionClient, startupId: string | null, on: Date) {
   const code = await scopeCode(tx, startupId);
   const fy = fiscalYear(on);
   const seq = await tx.financeSequence.upsert({
@@ -262,7 +262,10 @@ function cleanDates(input: Partial<ExpenseInput>, data: ExpenseData) {
 
 const scopeFrom = (scope: string) => (scope === "central" ? null : scope);
 
-export async function createExpense(access: FinanceAccess, input: ExpenseInput) {
+/** Where an expense came from, set by the module that creates it (never by the request body). */
+export type ExpenseOrigin = { source: "EVENT" | "SUBSCRIPTION" | "RECURRING_BILL"; sourceId: string };
+
+export async function createExpense(access: FinanceAccess, input: ExpenseInput, origin?: ExpenseOrigin) {
   const startupId = scopeFrom(input.scope);
   assertManage(access, startupId);
   const action = input.action ?? "submit";
@@ -288,12 +291,13 @@ export async function createExpense(access: FinanceAccess, input: ExpenseInput) 
         status,
         submittedBy: access.userId,
         submittedAt: status === "DRAFT" ? null : now,
+        ...(origin ? { source: origin.source, sourceId: origin.sourceId } : {}),
         ...(status === "PAID"
           ? { approvedBy: access.userId, approvedAt: now, paidBy: access.userId, paidAt: input.paidOn ? parseDate(input.paidOn, "payment date") : now, paymentRef: input.paymentRef?.trim() || null }
           : {}),
       } as Prisma.ExpenseUncheckedCreateInput,
     });
-    await audit({ action: `finance.expense.created`, entity: ENTITY, entityId: e.id, actorId: access.userId, startupId: startupId ?? undefined, metadata: { number, status, amountPaise: e.amountPaise } }, tx);
+    await audit({ action: `finance.expense.created`, entity: ENTITY, entityId: e.id, actorId: access.userId, startupId: startupId ?? undefined, metadata: { number, status, amountPaise: e.amountPaise, ...(origin ?? {}) } }, tx);
     return e;
   });
 }

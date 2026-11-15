@@ -340,7 +340,8 @@ if (!DB) {
       // (other startups from earlier tests spent nothing in August).
       assert.equal(all.cards.spentPaise, 1350050);
       assert.equal(all.byStartup.reduce((s: number, r: any) => s + r.spentPaise, 0), all.cards.spentPaise);
-      assert.equal(all.cards.budgetAllocatedPaise, null, "modules not built yet say so, rather than 0");
+      assert.equal(all.budget, null, "no budget set: says so, rather than 0");
+      assert.equal(all.cards.moneyReceivedPaise, null, "modules not built yet say so, rather than 0");
       assert.ok(all.payroll, "the CFO sees payroll");
       const aug = all.trend.find((m: any) => m.month === "2026-08");
       if (aug) assert.equal(aug.spentPaise, 1350050);

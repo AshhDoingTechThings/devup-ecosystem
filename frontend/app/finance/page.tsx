@@ -72,6 +72,8 @@ export default function FinanceOverviewPage() {
           <Quick icon={<Receipt className="h-4 w-4" />} label="Add software subscription bill" onClick={() => setForm({ category: "software" })} />
           {me.canSeePay && <QuickLink icon={<Wallet className="h-4 w-4" />} label="Set salaries & stipends" href="/finance/pay" />}
           <QuickLink icon={<CheckCircle2 className="h-4 w-4" />} label="Review waiting expenses" href="/finance/expenses" />
+          <QuickLink icon={<Receipt className="h-4 w-4" />} label="Set up a regular bill" href="/finance/bills" />
+          <QuickLink icon={<CheckCircle2 className="h-4 w-4" />} label="Budgets" href="/finance/budgets" />
         </div>
       )}
 
@@ -112,10 +114,10 @@ function OverviewCards({ data, single }: { data: Overview; single: boolean }) {
       </div>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <NotYet label="Budget" hint="Budgets for DevUp and each startup arrive in the next release." />
+        <BudgetCard budget={data.budget} />
         <NotYet label="Money received" hint="Income and receipts arrive with the revenue module." />
         <NotYet label="Money expected from startups" hint="What startups owe DevUp (shared rent, tools) arrives with startup bills and reminders." />
-        <NotYet label="Monthly subscriptions" hint="Software subscriptions and who uses each seat arrive with the subscriptions module." />
+        <SmallFigure label="Monthly subscriptions" value={c.monthlySubscriptionsPaise} empty="None recorded" href="/finance/subscriptions" hint="What active software subscriptions cost in an average month. Yearly plans are divided by 12." />
         <NotYet label="Cash in bank" hint="Shown only once a bank balance is recorded with its date. DevUp has no bank connection, so it is never guessed." />
       </div>
 
@@ -217,6 +219,28 @@ function Quick({ icon, label, onClick }: { icon: React.ReactNode; label: string;
 
 function QuickLink({ icon, label, href }: { icon: React.ReactNode; label: string; href: string }) {
   return <Link href={href} className="inline-flex items-center gap-2 rounded-lg border border-white/[0.08] bg-[#0f0f0f] px-3 py-2 text-[12.5px] text-[#cfcfcf] transition hover:border-white/20 hover:text-white">{icon}{label}</Link>;
+}
+
+function BudgetCard({ budget }: { budget: Overview["budget"] }) {
+  if (!budget) {
+    return <SmallFigure label="Budget" value={null} empty="No budget set" href="/finance/budgets" hint="Budgets running in this period for this view. The CFO creates them in Budgets." />;
+  }
+  return (
+    <Link href="/finance/budgets" className="rounded-xl border border-white/[0.07] bg-[#0f0f0f] p-3.5 hover:border-white/15">
+      <div className="flex items-center gap-1.5 text-[11.5px] text-[#8b8b8b]">Budget left<Tip text="Budget minus what's been paid and what's approved but not paid yet, for the budgets running in this period." /></div>
+      <div className={`mt-1.5 text-[15px] font-semibold tabular-nums ${budget.over ? "text-red-300" : "text-white"}`}>{budget.over ? "Over by " : ""}{inr(Math.abs(budget.availablePaise), { compact: true })}</div>
+      <div className="text-[11px] text-[#6b6b6b]">of {inr(budget.allocatedPaise, { compact: true })} · {budget.usedPercent}% used</div>
+    </Link>
+  );
+}
+
+function SmallFigure({ label, value, empty, href, hint }: { label: string; value: number | null; empty: string; href: string; hint: string }) {
+  return (
+    <Link href={href} className="rounded-xl border border-white/[0.07] bg-[#0f0f0f] p-3.5 hover:border-white/15">
+      <div className="flex items-center gap-1.5 text-[11.5px] text-[#8b8b8b]">{label}<Tip text={hint} /></div>
+      <div className={`mt-1.5 text-[15px] font-semibold tabular-nums ${value == null ? "text-[#4d4d4d]" : "text-white"}`}>{value == null ? empty : inr(value, { compact: true })}</div>
+    </Link>
+  );
 }
 
 function NotYet({ label, hint }: { label: string; hint: string }) {

@@ -9,6 +9,11 @@ import * as expenses from "./expenses.service";
 import * as pay from "./pay.service";
 import * as roles from "./roles.service";
 import { overview, visibleStartups } from "./overview.service";
+import * as budgets from "./budgets.service";
+import * as recurring from "./recurring.service";
+import * as subs from "./subscriptions.service";
+import * as events from "./events.service";
+import { checkCronSecret, runDaily } from "./cron.service";
 
 /**
  * /api/finance — the CFO portal.
@@ -20,6 +25,17 @@ import { overview, visibleStartups } from "./overview.service";
  * person works at the startup they claim for.
  */
 const router = Router();
+
+/**
+ * /api/finance/cron — the scheduler's door. No user session: the shared
+ * FINANCE_CRON_SECRET header is the only credential. Mounted before the
+ * signed-in finance routes (see app.ts).
+ */
+export const financeCronRouter = Router();
+financeCronRouter.post("/daily", async (req, res) => {
+  checkCronSecret(req.header("x-cron-secret"));
+  res.json({ success: true, data: await runDaily() });
+});
 const ok = (res: any, data: unknown, status = 200) => res.status(status).json({ success: true, data });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: env.MAX_FILE_SIZE_MB * 1024 * 1024 } });
 
@@ -182,6 +198,77 @@ router.put(
 );
 router.post("/expenses/:id/attachments", upload.single("file"), validate(idParam), async (req, res) =>
   ok(res, await expenses.addAttachment(req.finance!, req.params.id as string, req.file, String(req.body?.kind ?? "RECEIPT")), 201));
+
+/* Budgets */
+
+const budgetLine = z.object({ categoryGroup: z.string().trim().max(60).nullable().optional(), amount: money, note: text(300) });
+router.get("/budgets", async (req, res) => ok(res, await budgets.listBudgets(req.finance!, { scope: req.query.scope as string | undefined, current: req.query.current === "1", archived: req.query.archived === "1" })));
+router.get("/budgets/groups", async (_req, res) => ok(res, budgets.spendingGroups()));
+router.get("/budgets/:id", validate(idParam), async (req, res) => ok(res, await budgets.getBudget(req.finance!, req.params.id as string)));
+router.post(
+  "/budgets",
+  validate(z.object({ body: z.object({
+    name: z.string().trim().min(2).max(120), scope: z.enum(["ECOSYSTEM", "CENTRAL", "STARTUP"]), startupId: uuid.nullable().optional(), purpose: text(60),
+    period: z.enum(["WEEKLY", "MONTHLY", "QUARTERLY", "YEARLY", "CUSTOM"]), anchor: date.nullable().optional(), from: date.nullable().optional(), to: date.nullable().optional(),
+    lines: z.array(budgetLine).min(1).max(30), approvalLimit: money.nullable().optional(), notes: text(1000),
+  }) })),
+  async (req, res) => ok(res, await budgets.createBudget(req.finance!, req.body), 201),
+);
+router.patch("/budgets/:id", validate(idParam.extend({ body: z.object({ name: z.string().trim().min(2).max(120).optional(), lines: z.array(budgetLine).min(1).max(30).optional(), approvalLimit: money.nullable().optional(), notes: text(1000), reason: text(500) }) })), async (req, res) =>
+  ok(res, await budgets.reviseBudget(req.finance!, req.params.id as string, req.body)));
+router.post("/budgets/:id/archive", validate(idParam), async (req, res) => ok(res, await budgets.archiveBudget(req.finance!, req.params.id as string)));
+
+/* Recurring bills */
+
+const recurringBody = z.object({
+  scope, title: z.string().trim().min(2).max(160), categoryId: uuid, vendorId: uuid.nullable().optional(), payee: text(200), amount: money,
+  frequency: z.enum(["WEEKLY", "MONTHLY", "QUARTERLY", "YEARLY"]).optional(), dueDay: z.coerce.number().int(), startsOn: date, endsOn: date.nullable().optional(),
+  leadDays: z.coerce.number().int().optional(), autoApprove: z.boolean().optional(), notes: text(1000),
+});
+router.get("/recurring", async (req, res) => ok(res, await recurring.listBills(req.finance!, req.query.scope as string | undefined)));
+router.post("/recurring", validate(z.object({ body: recurringBody })), async (req, res) => ok(res, await recurring.createBill(req.finance!, req.body), 201));
+router.patch("/recurring/:id", validate(idParam.extend({ body: recurringBody.partial().extend({ isActive: z.boolean().optional() }) })), async (req, res) =>
+  ok(res, await recurring.updateBill(req.finance!, req.params.id as string, req.body)));
+router.post("/recurring/generate", async (req, res) => ok(res, await recurring.generateNow(req.finance!)));
+
+/* Subscriptions */
+
+const subBody = z.object({
+  scope, name: z.string().trim().min(2).max(120), provider: z.string().trim().min(2).max(120), plan: text(120),
+  billingCycle: z.enum(["WEEKLY", "MONTHLY", "QUARTERLY", "YEARLY"]).optional(), cost: money, currency: z.string().trim().length(3).optional(),
+  seatsPurchased: z.coerce.number().int().nullable().optional(), renewalOn: date.nullable().optional(), paymentMethodNote: text(120),
+  responsibleUserId: uuid.nullable().optional(), categoryId: uuid.nullable().optional(), notes: text(1000),
+});
+router.get("/subscriptions", async (req, res) => ok(res, await subs.listSubscriptions(req.finance!, req.query.scope as string | undefined)));
+router.get("/subscriptions/usage", async (req, res) => ok(res, await subs.seatUsage(req.finance!, req.query.scope as string | undefined)));
+router.get("/subscriptions/:id", validate(idParam), async (req, res) => ok(res, await subs.getSubscription(req.finance!, req.params.id as string)));
+router.post("/subscriptions", validate(z.object({ body: subBody })), async (req, res) => ok(res, await subs.createSubscription(req.finance!, req.body), 201));
+router.patch("/subscriptions/:id", validate(idParam.extend({ body: subBody.partial().extend({ status: z.enum(["ACTIVE", "PAUSED", "CANCELLED"]).optional(), cancelledOn: date.nullable().optional() }) })), async (req, res) =>
+  ok(res, await subs.updateSubscription(req.finance!, req.params.id as string, req.body)));
+router.post("/subscriptions/:id/seats", validate(idParam.extend({ body: z.object({ userId: uuid.nullable().optional(), name: text(120), email: z.string().trim().email().max(200).nullable().optional().or(z.literal("")), startupId: uuid.nullable().optional(), note: text(300) }) })), async (req, res) =>
+  ok(res, await subs.assignSeat(req.finance!, req.params.id as string, req.body), 201));
+router.delete("/subscriptions/seats/:id", validate(idParam), async (req, res) => ok(res, await subs.removeSeat(req.finance!, req.params.id as string)));
+router.post("/subscriptions/:id/charges", validate(idParam.extend({ body: z.object({ amount: money.nullable().optional(), on: date, paid: z.boolean().optional(), paymentRef: text(120) }) })), async (req, res) =>
+  ok(res, await subs.recordCharge(req.finance!, req.params.id as string, req.body), 201));
+
+/* Meetings & events */
+
+const eventBody = z.object({
+  scope, name: z.string().trim().min(2).max(160),
+  kind: z.enum(["TEAM_MEETING", "STARTUP_MEETING", "FOUNDER_MEETING", "INVESTOR_MEETING", "CLIENT_MEETING", "TEAM_EVENT", "WORKSHOP", "TRAVEL", "OTHER"]).optional(),
+  date, startTime: z.string().trim().max(5).nullable().optional(), purpose: text(1000), location: text(300),
+  participants: z.array(z.object({ userId: uuid.nullable().optional(), name: z.string().trim().max(120) })).max(200).optional(),
+  budgetId: uuid.nullable().optional(), status: z.enum(["PLANNED", "DONE", "CANCELLED"]).optional(), notes: text(1000),
+});
+router.get("/events", async (req, res) => ok(res, await events.listEvents(req.finance!, req.query as any)));
+router.get("/events/:id", validate(idParam), async (req, res) => ok(res, await events.getEvent(req.finance!, req.params.id as string)));
+router.post("/events", validate(z.object({ body: eventBody })), async (req, res) => ok(res, await events.createEvent(req.finance!, req.body), 201));
+router.patch("/events/:id", validate(idParam.extend({ body: eventBody.partial() })), async (req, res) => ok(res, await events.updateEvent(req.finance!, req.params.id as string, req.body)));
+router.post(
+  "/events/:id/costs",
+  validate(idParam.extend({ body: z.object({ ...expenseFields, scope: scope.optional(), action: z.enum(["draft", "submit", "paid"]).optional(), paymentRef: text(120), paidOn: date.nullable().optional() }) })),
+  async (req, res) => ok(res, await events.addCost(req.finance!, req.params.id as string, req.body), 201),
+);
 
 /* Pay setup — the CFO only */
 

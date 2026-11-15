@@ -69,6 +69,7 @@ model User {
   joinRequests         StartupJoinRequest[]    @relation("JoinRequestUser")
   reviewedJoinRequests StartupJoinRequest[]    @relation("JoinRequestReviewer")
   financeRoles         FinanceRole[]           @relation("FinanceRoleUser")
+  subscriptionSeats    SubscriptionSeat[]      @relation("SubscriptionSeatUser")
 }
 
 /// Single-use, expiring proof-of-inbox tokens. Only the SHA-256 of the token is
@@ -237,6 +238,10 @@ model Startup {
   financeRoles       FinanceRole[]
   expenses           Expense[]               @relation("ExpenseStartup")
   expenseAllocations ExpenseAllocation[]     @relation("AllocationStartup")
+  budgets            Budget[]                @relation("BudgetStartup")
+  recurringBills     RecurringBill[]         @relation("RecurringBillStartup")
+  subscriptions      Subscription[]          @relation("SubscriptionStartup")
+  financeEvents      FinanceEvent[]          @relation("FinanceEventStartup")
 }
 
 enum StartupMemberRole {
@@ -2564,6 +2569,7 @@ model Expense {
   @@index([status, dueOn])
   @@index([categoryId])
   @@index([claimantUserId])
+  @@index([source, sourceId])
 }
 
 enum AllocationMethod {
@@ -2678,4 +2684,211 @@ model PayeeBankAccount {
 
   @@index([employeeId])
   @@index([internId])
+}
+
+// ── Finance, slice 2: budgets, recurring bills, subscriptions, events ──────
+// These reuse Expense for the money itself (Expense.source + sourceId say
+// where an expense came from), so totals are always computed one way.
+
+enum BudgetScope {
+  /// Everything: central DevUp and every startup, each cost counted once.
+  ECOSYSTEM
+  /// Central DevUp operations only.
+  CENTRAL
+  /// One startup, including its share of shared DevUp costs.
+  STARTUP
+}
+
+enum BudgetPeriod {
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  CUSTOM
+}
+
+/// Money set aside for a scope and period. Lines split it by category group;
+/// a line with no group covers all spending in the scope.
+model Budget {
+  id                 String       @id @default(uuid())
+  name               String
+  scope              BudgetScope
+  startupId          String?
+  startup            Startup?     @relation("BudgetStartup", fields: [startupId], references: [id], onDelete: Restrict)
+  /// What it is for, in words: "Office", "Payroll", "Software"… (display only).
+  purpose            String?
+  period             BudgetPeriod
+  periodStart        DateTime     @db.Date
+  periodEnd          DateTime     @db.Date
+  /// Expenses above this need the CFO's explicit approval (they always do today; recorded for policy).
+  approvalLimitPaise Int?
+  notes              String?
+  version            Int          @default(1)
+  archivedAt         DateTime?
+  createdBy          String
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  lines BudgetLine[]
+
+  @@index([scope, startupId, periodStart, periodEnd])
+}
+
+model BudgetLine {
+  id             String  @id @default(uuid())
+  budgetId       String
+  budget         Budget  @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  /// A FinanceCategory.group ("Office & operations", "People"…). Null: everything in scope.
+  categoryGroup  String?
+  allocatedPaise Int
+  note           String?
+
+  @@unique([budgetId, categoryGroup])
+}
+
+enum RecurringFrequency {
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+/// A bill that comes back on a schedule (rent, electricity, housekeeping). Each due date
+/// becomes one Expense, exactly once (RecurringBillRun).
+model RecurringBill {
+  id          String             @id @default(uuid())
+  startupId   String?
+  startup     Startup?           @relation("RecurringBillStartup", fields: [startupId], references: [id], onDelete: Restrict)
+  title       String
+  categoryId  String
+  vendorId    String?
+  payee       String?
+  /// The usual amount. Variable bills (electricity) are created with it and corrected before approval.
+  amountPaise Int
+  frequency   RecurringFrequency @default(MONTHLY)
+  /// Day of the month (1–28) the bill is due; for weekly bills, ISO weekday 1–7.
+  dueDay      Int
+  startsOn    DateTime           @db.Date
+  endsOn      DateTime?          @db.Date
+  /// Create the expense this many days before it is due, and remind from then.
+  leadDays    Int                @default(5)
+  /// Fixed bills the CFO set up (rent) can be created already approved.
+  autoApprove Boolean            @default(false)
+  isActive    Boolean            @default(true)
+  notes       String?
+  createdBy   String
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  runs RecurringBillRun[]
+
+  @@index([isActive])
+}
+
+model RecurringBillRun {
+  id        String        @id @default(uuid())
+  billId    String
+  bill      RecurringBill @relation(fields: [billId], references: [id], onDelete: Cascade)
+  /// The due date this run is for, as YYYY-MM-DD. One expense per bill per due date.
+  dueDate   String
+  expenseId String
+  createdAt DateTime      @default(now())
+
+  @@unique([billId, dueDate])
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+}
+
+/// Paid software and services, and who they are for.
+model Subscription {
+  id                String             @id @default(uuid())
+  startupId         String?
+  startup           Startup?           @relation("SubscriptionStartup", fields: [startupId], references: [id], onDelete: Restrict)
+  name              String
+  provider          String
+  plan              String?
+  billingCycle      RecurringFrequency @default(MONTHLY)
+  /// Cost per billing cycle, in rupees' paise (INR value).
+  costPaise         Int
+  currency          String             @default("INR")
+  seatsPurchased    Int?
+  renewalOn         DateTime?          @db.Date
+  /// A description such as "Company card ending 4242" — never the card number itself.
+  paymentMethodNote String?
+  status            SubscriptionStatus @default(ACTIVE)
+  cancelledAt       DateTime?          @db.Date
+  responsibleUserId String?
+  categoryId        String
+  notes             String?
+  createdBy         String
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  seats SubscriptionSeat[]
+
+  @@index([status, renewalOn])
+}
+
+/// Someone confirmed as using a seat. A purchased seat with no row is unassigned — never assumed used.
+model SubscriptionSeat {
+  id             String       @id @default(uuid())
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  userId         String?
+  user           User?        @relation("SubscriptionSeatUser", fields: [userId], references: [id], onDelete: SetNull)
+  /// For someone without a DevUp account.
+  name           String?
+  email          String?
+  startupId      String?
+  assignedAt     DateTime     @default(now())
+  removedAt      DateTime?
+  confirmedBy    String
+  note           String?
+
+  @@index([subscriptionId, removedAt])
+}
+
+enum FinanceEventKind {
+  TEAM_MEETING
+  STARTUP_MEETING
+  FOUNDER_MEETING
+  INVESTOR_MEETING
+  CLIENT_MEETING
+  TEAM_EVENT
+  WORKSHOP
+  TRAVEL
+  OTHER
+}
+
+enum FinanceEventStatus {
+  PLANNED
+  DONE
+  CANCELLED
+}
+
+/// A meeting, get-together or trip. Its costs are Expenses with source EVENT.
+model FinanceEvent {
+  id           String             @id @default(uuid())
+  startupId    String?
+  startup      Startup?           @relation("FinanceEventStartup", fields: [startupId], references: [id], onDelete: Restrict)
+  name         String
+  kind         FinanceEventKind   @default(TEAM_MEETING)
+  date         DateTime           @db.Date
+  startTime    String?
+  purpose      String?
+  location     String?
+  /// [{ userId?, name }]
+  participants Json               @default("[]")
+  budgetId     String?
+  status       FinanceEventStatus @default(PLANNED)
+  notes        String?
+  createdBy    String
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([startupId, date])
 }

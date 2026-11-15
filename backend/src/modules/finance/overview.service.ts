@@ -3,6 +3,8 @@ import { prisma } from "../../lib/prisma";
 import { FinanceAccess, canSeePay, scopeWhere } from "./access";
 import { PeriodKind, dateOnly, periodRange } from "./money";
 import { headcounts } from "./expenses.service";
+import { budgetSnapshot } from "./budgets.service";
+import { monthlySubscriptions } from "./subscriptions.service";
 
 /**
  * Numbers for the CFO dashboard. Every figure is read from real records; a
@@ -117,12 +119,13 @@ export async function overview(access: FinanceAccess, q: { scope?: string; perio
       // A startup's own spending plus its share of shared costs. Ecosystem view: each cost once.
       ...(singleStartup ? { sharedCostSharePaise: get0(shareBy, singleStartup) } : {}),
       // Modules not built yet: null means "not tracked yet", never zero.
-      budgetAllocatedPaise: null,
       moneyReceivedPaise: null,
       expectedFromStartupsPaise: null,
-      monthlySubscriptionsPaise: null,
+      monthlySubscriptionsPaise: await monthlySubscriptions(access, q.scope),
       cashBalancePaise: null,
     },
+    // Budgets of this view (ecosystem / central / startup) running at any time in the period.
+    budget: await budgetSnapshot(access, q.scope ?? "all", from, to),
     payroll: canSeePay(access) ? await payrollSnapshot(singleStartup) : null,
     byCategoryGroup: [...groups.entries()].map(([group, amountPaise]) => ({ group, amountPaise })).sort((a, b) => b.amountPaise - a.amountPaise),
     byStartup: singleStartup ? perStartup : [{ id: "central", name: "Central DevUp operations", code: null, isActive: true, type: null, spentPaise: centralSpent, sharedCostSharePaise: 0, peopleNow: 0 }, ...perStartup],

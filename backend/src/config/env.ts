@@ -93,6 +93,9 @@ const envSchema = z.object({
   // Finance receipts, proofs and payslips. MUST be a private bucket: files are only ever
   // served by short-lived signed link (modules/finance).
   STORAGE_BUCKET_FINANCE: z.string().default("finance-documents"),
+  // Shared secret the scheduler (Render cron) sends to POST /api/finance/cron/daily.
+  // Unset: the daily finance job refuses to run.
+  FINANCE_CRON_SECRET: z.string().min(24).optional(),
   MAX_FILE_SIZE_MB: z.string().default("10").transform((v) => Number.parseInt(v, 10)),
 
   ADMIN_REGISTRATION_SECRET: z.string().default("dev-admin-secret-key"),
