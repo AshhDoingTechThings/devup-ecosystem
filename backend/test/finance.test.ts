@@ -148,9 +148,8 @@ if (!DB) {
 
       expect(await as(superAdmin).post("/roles", { userId: cfo.id, role: "ECOSYSTEM_CFO", startupId: A.id }), 400);
       expect(await as(superAdmin).post("/roles", { userId: cfo.id, role: "ECOSYSTEM_CFO" }), 201);
-      const second = await as(superAdmin).post("/roles", { userId: outsider.id, role: "ECOSYSTEM_CFO" });
-      expect(second, 409);
-      assert.equal(second.body.code, "CFO_EXISTS");
+      // More than one CFO is allowed; the same person twice is not.
+      expect(await as(superAdmin).post("/roles", { userId: cfo.id, role: "ECOSYSTEM_CFO" }), 409);
 
       expect(await as(superAdmin).post("/roles", { userId: mgrA.id, role: "STARTUP_FINANCE_MANAGER" }), 400);
       expect(await as(superAdmin).post("/roles", { userId: mgrA.id, role: "STARTUP_FINANCE_MANAGER", startupId: A.id }), 201);

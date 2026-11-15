@@ -316,6 +316,14 @@ export async function approve(args: {
   if (existing && existing.status === "PAID") {
     throw new AppError(409, "This month has already been paid", "ALREADY_PAID");
   }
+  // The CFO's stipend run owns this month: recomputing here would change an amount
+  // the CFO has already reviewed. The run, not the workspace, decides it now.
+  if (existing?.payrollRunId) {
+    const run = await prisma.payrollRun.findUnique({ where: { id: existing.payrollRunId }, select: { status: true } });
+    if (run && run.status !== "CANCELLED") {
+      throw new AppError(409, "This month is in DevUp finance's stipend run — it's handled there", "IN_PAYROLL_RUN");
+    }
+  }
 
   const adjustment = args.adjustment ?? 0;
   const netAmount = c.grossAmount + adjustment;
@@ -374,6 +382,12 @@ export async function markPaid(args: {
     throw new AppError(409, "Approve this payout before marking it paid", "NOT_APPROVED");
   }
   if (payout.status === "PAID") throw new AppError(409, "Already marked paid", "ALREADY_PAID");
+  if (payout.payrollRunId) {
+    const run = await prisma.payrollRun.findUnique({ where: { id: payout.payrollRunId }, select: { status: true } });
+    if (run && run.status !== "CANCELLED") {
+      throw new AppError(409, "This stipend is paid through DevUp finance's stipend run", "IN_PAYROLL_RUN");
+    }
+  }
 
   const updated = await prisma.stipendPayout.update({
     where: { id: payout.id },

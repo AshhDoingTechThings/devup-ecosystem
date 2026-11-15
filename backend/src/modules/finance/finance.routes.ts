@@ -14,6 +14,8 @@ import * as recurring from "./recurring.service";
 import * as subs from "./subscriptions.service";
 import * as events from "./events.service";
 import { checkCronSecret, runDaily } from "./cron.service";
+import * as payroll from "./payroll.service";
+import * as payslips from "./payslips.service";
 
 /**
  * /api/finance — the CFO portal.
@@ -97,6 +99,18 @@ router.post("/me/claims/:id/submit", validate(idParam), async (req, res) => ok(r
 router.delete("/me/claims/:id", validate(idParam), async (req, res) => ok(res, await expenses.deleteDraft(req.finance!, req.params.id as string)));
 router.post("/me/claims/:id/attachments", upload.single("file"), validate(idParam), async (req, res) =>
   ok(res, await expenses.addAttachment(req.finance!, req.params.id as string, req.file, String(req.body?.kind ?? "RECEIPT")), 201));
+
+/* My pay — staff see their own payslips and stipend statements */
+
+router.get("/me/pay", async (req, res) => ok(res, await payslips.myPay(req.user!.id)));
+const sendPdf = (res: any, f: { pdf: Buffer; filename: string }) => {
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${f.filename}"`);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.send(f.pdf);
+};
+router.get("/payslips/:id", validate(idParam), async (req, res) => sendPdf(res, await payslips.payslip(req.finance!, req.params.id as string)));
+router.get("/stipend-statements/:id", validate(idParam), async (req, res) => sendPdf(res, await payslips.stipendStatement(req.finance!, req.params.id as string)));
 
 /** A short-lived link to a receipt; the service checks the caller may see the record it belongs to. */
 router.get("/attachments/:id/link", validate(idParam), async (req, res) => ok(res, await expenses.attachmentLink(req.finance!, req.params.id as string)));
@@ -269,6 +283,31 @@ router.post(
   validate(idParam.extend({ body: z.object({ ...expenseFields, scope: scope.optional(), action: z.enum(["draft", "submit", "paid"]).optional(), paymentRef: text(120), paidOn: date.nullable().optional() }) })),
   async (req, res) => ok(res, await events.addCost(req.finance!, req.params.id as string, req.body), 201),
 );
+
+/* Payroll and stipend runs — the CFO only */
+
+const adjustment = z.object({ kind: z.enum(["INCENTIVE", "BONUS", "DEDUCTION", "REIMBURSEMENT", "SETTLEMENT"]), label: z.string().trim().min(2).max(80), amount: money });
+const runLine = z.object({ params: z.object({ id: uuid, lineId: uuid }) });
+router.get("/payroll/runs", requireCfo, async (req, res) => ok(res, await payroll.listRuns(req.finance!, { startupId: req.query.startup as string | undefined, kind: req.query.kind as any })));
+router.post(
+  "/payroll/runs",
+  requireCfo,
+  validate(z.object({ body: z.object({ kind: z.enum(["SALARY", "STIPEND"]), startupId: uuid, year: z.coerce.number().int(), month: z.coerce.number().int(), basis: z.enum(["FIXED", "ATTENDANCE"]).optional(), notes: text(500) }) })),
+  async (req, res) => ok(res, await payroll.createRun(req.finance!, req.body), 201),
+);
+router.get("/payroll/runs/:id", requireCfo, validate(idParam), async (req, res) => ok(res, await payroll.getRun(req.finance!, req.params.id as string)));
+router.patch("/payroll/runs/:id/lines/:lineId", requireCfo, validate(runLine.extend({ body: z.object({ adjustments: z.array(adjustment).max(20).optional(), hold: z.boolean().optional(), note: text(300) }) })), async (req, res) =>
+  ok(res, await payroll.changeLine(req.finance!, req.params.id as string, req.params.lineId as string, req.body)));
+router.post("/payroll/runs/:id/submit", requireCfo, validate(idParam), async (req, res) => ok(res, await payroll.submitForReview(req.finance!, req.params.id as string)));
+router.post("/payroll/runs/:id/reopen", requireCfo, validate(idParam), async (req, res) => ok(res, await payroll.backToDraft(req.finance!, req.params.id as string)));
+router.post("/payroll/runs/:id/approve", requireCfo, validate(idParam.extend({ body: z.object({ confirm: z.boolean() }) })), async (req, res) => ok(res, await payroll.approveRun(req.finance!, req.params.id as string, req.body.confirm)));
+router.post("/payroll/runs/:id/cancel", requireCfo, validate(idParam.extend({ body: z.object({ reason: z.string().trim().min(3).max(500) }) })), async (req, res) => ok(res, await payroll.cancelRun(req.finance!, req.params.id as string, req.body.reason)));
+router.post("/payroll/runs/:id/bank-file", requireCfo, validate(idParam), async (req, res) => ok(res, await payroll.bankFile(req.finance!, req.params.id as string)));
+router.get("/payroll/runs/:id/report", requireCfo, validate(idParam), async (req, res) => ok(res, await payroll.runReportCsv(req.finance!, req.params.id as string)));
+router.post("/payroll/runs/:id/lines/:lineId/pay", requireCfo, validate(runLine.extend({ body: z.object({ paidOn: date, paymentRef: text(120), paymentMethod: method.nullable().optional() }) })), async (req, res) =>
+  ok(res, await payroll.markLinePaid(req.finance!, req.params.id as string, req.params.lineId as string, req.body)));
+router.post("/payroll/runs/:id/lines/:lineId/fail", requireCfo, validate(runLine.extend({ body: z.object({ reason: z.string().trim().min(3).max(300) }) })), async (req, res) =>
+  ok(res, await payroll.markLineFailed(req.finance!, req.params.id as string, req.params.lineId as string, req.body.reason)));
 
 /* Pay setup — the CFO only */
 

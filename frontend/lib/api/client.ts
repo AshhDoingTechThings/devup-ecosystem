@@ -131,5 +131,37 @@ export const api = {
 };
 
 export const apiClient = request;
+
+/**
+ * Download a file the API serves (a PDF payslip) with the signed-in user's
+ * token, and hand it to the browser as a download. A plain <a href> can't
+ * carry the Authorization header.
+ */
+export async function downloadFile(path: string, fallbackName: string) {
+  const token = await getAccessToken();
+  const res = await fetch(`${BASE_URL}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, body.code || "DOWNLOAD_FAILED", body.error || "The file couldn't be downloaded");
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? fallbackName;
+  saveBlob(await res.blob(), name);
+}
+
+/** Save text (a CSV the API returned as JSON) as a file. */
+export function saveText(text: string, name: string, type = "text/csv;charset=utf-8") {
+  saveBlob(new Blob([text], { type }), name);
+}
+
+function saveBlob(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
 export { ApiError };
 export default api;

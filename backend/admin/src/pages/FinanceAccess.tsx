@@ -106,7 +106,7 @@ export default function FinanceAccess() {
           {roles.isLoading ? (
             <div className="p-5 text-sm text-gray-500">Loading…</div>
           ) : active.length === 0 ? (
-            <div className="p-5 text-sm text-gray-500">Nobody has finance access yet. Start by giving the CFO role to DevUp's CFO.</div>
+            <div className="p-5 text-sm text-gray-500">Nobody has finance access yet. Start by giving the CFO role to DevUp's CFO. There can be more than one CFO; each action is recorded under the person who took it.</div>
           ) : (
             <table className="w-full text-sm">
               <tbody>

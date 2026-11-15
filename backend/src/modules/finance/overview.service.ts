@@ -5,6 +5,7 @@ import { PeriodKind, dateOnly, periodRange } from "./money";
 import { headcounts } from "./expenses.service";
 import { budgetSnapshot } from "./budgets.service";
 import { monthlySubscriptions } from "./subscriptions.service";
+import { payDue } from "./payroll.service";
 
 /**
  * Numbers for the CFO dashboard. Every figure is read from real records; a
@@ -177,6 +178,8 @@ async function payrollSnapshot(startupId: string | null) {
     }),
   ]);
   return {
+    // Approved runs not yet fully paid: what payroll still has to pay out.
+    payDuePaise: await payDue(startupId),
     monthlySalariesPaise: employees.reduce((s, e) => s + (e.compensation[0]?.monthlyGrossPaise ?? 0), 0),
     employees: employees.length,
     employeesWithoutConfirmedPay: employees.filter((e) => !e.compensation[0]).length,

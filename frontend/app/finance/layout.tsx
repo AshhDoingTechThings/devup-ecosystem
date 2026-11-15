@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, LayoutDashboard, Receipt, Wallet, HandCoins, Lock, Loader2, Building2, PiggyBank, CalendarClock, AppWindow, Users } from "lucide-react";
+import { ArrowLeft, LayoutDashboard, Receipt, Wallet, HandCoins, Lock, Loader2, Building2, PiggyBank, CalendarClock, AppWindow, Users, Banknote, FileText } from "lucide-react";
 import { financeApi, FinanceMe, Period, Scope } from "@/lib/api/finance";
 import { FinanceContext, heading } from "@/components/finance/ui";
 import "./finance.css";
@@ -24,7 +24,9 @@ const NAV = [
   { href: "/finance/subscriptions", label: "Subscriptions", icon: AppWindow, need: "finance" as const },
   { href: "/finance/events", label: "Meetings & events", icon: Users, need: "finance" as const },
   { href: "/finance/pay", label: "Salaries & stipends", icon: Wallet, need: "pay" as const },
+  { href: "/finance/payroll", label: "Payroll", icon: Banknote, need: "pay" as const },
   { href: "/finance/my-claims", label: "My expense claims", icon: HandCoins, need: "claims" as const },
+  { href: "/finance/my-pay", label: "My pay", icon: FileText, need: "claims" as const },
 ];
 
 /** The phone tab bar has room for five; the rest are on each page's links. */
@@ -82,7 +84,7 @@ export default function FinanceLayout({ children }: { children: React.ReactNode 
       </Shell>
     );
   }
-  if (!hasFinance && me.claimStartups.length === 0) {
+  if (!hasFinance && me.claimStartups.length === 0 && !pathname.startsWith("/finance/my-pay")) {
     return (
       <Shell>
         <Centered icon={<Lock className="h-10 w-10 text-[#3d3d3d]" />} title="You don't have finance access">
@@ -93,7 +95,7 @@ export default function FinanceLayout({ children }: { children: React.ReactNode 
   }
 
   // Everything except "My expense claims" needs a finance role.
-  const financePage = pathname === "/finance" || (pathname.startsWith("/finance/") && !pathname.startsWith("/finance/my-claims"));
+  const financePage = pathname === "/finance" || (pathname.startsWith("/finance/") && !pathname.startsWith("/finance/my-"));
   if (financePage && !hasFinance) {
     return (
       <Shell>

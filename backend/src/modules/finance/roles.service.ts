@@ -8,7 +8,8 @@ import { audit } from "../shared/audit.service";
  * enforces that), and:
  *   - only to an account whose email is verified — never by matching a name;
  *   - never to yourself, so whoever hands out access cannot also approve pay;
- *   - one active CFO at a time, covering everything (no startup);
+ *   - a CFO covers everything (no startup); there may be more than one, and
+ *     every action is recorded under the person who took it;
  *   - a startup finance manager always has exactly one startup.
  * Revoking keeps the row (revokedAt), so who had access when stays on record.
  */
@@ -76,12 +77,6 @@ export async function grantRole(args: { actorId: string; userId: string; role: F
   }
 
   return prisma.$transaction(async (tx) => {
-    if (args.role === "ECOSYSTEM_CFO") {
-      const current = await tx.financeRole.findFirst({ where: { role: "ECOSYSTEM_CFO", revokedAt: null }, select: { userId: true } });
-      if (current) {
-        throw new AppError(409, current.userId === args.userId ? "This person is already the CFO" : "There is already a CFO. Revoke their role first.", "CFO_EXISTS");
-      }
-    }
     const dup = await tx.financeRole.findFirst({ where: { userId: args.userId, role: args.role, startupId, revokedAt: null }, select: { id: true } });
     if (dup) throw new AppError(409, "This person already has that role", "ROLE_EXISTS");
 

@@ -5,8 +5,7 @@ DevUp's finance records: expenses, shared costs, staff claims, pay setup and ban
 Built so far:
 - **Slice 1:** roles, expenses, shared costs, claims, pay setup, dashboard.
 - **Slice 2:** budgets, regular (recurring) bills, subscriptions and seats, meetings and events, and the daily job.
-
-Still to come: payroll and stipend runs, startup invoices and reminders, revenue and collaborations, report exports.
+- **Slice 3:** payroll and stipend runs, the bank-transfer file, payment confirmation, payslips and stipend statements, and "My pay".
 
 ## Ideas that hold everything together
 
@@ -27,7 +26,7 @@ Finance roles live in `FinanceRole`, separate from `User.role`. A platform admin
 
 | Role | Scope | Can |
 |---|---|---|
-| `ECOSYSTEM_CFO` | Everything (one at a time) | Everything. **The only role that approves, rejects, pays, voids, corrects, splits costs, and sees salaries, stipends and bank details.** |
+| `ECOSYSTEM_CFO` | Everything (more than one allowed; each action recorded under its author) | Everything. **The only role that approves, rejects, pays, voids, corrects, splits costs, and sees salaries, stipends and bank details.** |
 | `STARTUP_FINANCE_MANAGER` | One startup | Add, edit and submit that startup's expenses. Cannot approve or pay. Other startups and central DevUp answer 404. |
 | `FINANCE_VIEWER` | One startup, or everything | Read only. Never sees pay or bank details. |
 | Staff (no role) | Their own claims | Claim expenses for a startup where they have an active employee, intern or member record. See only their own claims. |
@@ -72,6 +71,13 @@ Every route needs a signed-in user. Pay and bank routes are CFO-only; role route
 | POST | `/subscriptions/:id/charges` | can manage | Record a payment (becomes an expense; the renewal moves on a cycle) |
 | GET · POST · PATCH | `/events` · `/events/:id` | finance · can manage | Meetings and events, with totals |
 | POST | `/events/:id/costs` | can manage | Add a cost (an expense with source EVENT) |
+| GET · POST | `/payroll/runs` · `/payroll/runs/:id` | CFO | Runs (one per kind, startup and month) · prepare a month (`kind` SALARY or STIPEND; stipend `basis` FIXED or ATTENDANCE) |
+| PATCH | `/payroll/runs/:id/lines/:lineId` | CFO | Adjustments (incentive, bonus, deduction, reimbursement, final settlement) and hold, before approval |
+| POST | `/payroll/runs/:id/submit` · `/reopen` · `/approve` (`confirm: true`) · `/cancel` | CFO | Draft → review → approved; back to draft; cancel (only with no payments) |
+| POST | `/payroll/runs/:id/bank-file` | CFO | Bulk-transfer CSV (account numbers only in the file); run becomes PROCESSING |
+| POST | `/payroll/runs/:id/lines/:lineId/pay` · `/fail` | CFO | Confirm a payment (idempotent per reference; records an expense) or record a failure with its reason |
+| GET | `/payroll/runs/:id/report` | CFO | Run report as CSV |
+| GET | `/me/pay` · `/payslips/:id` · `/stipend-statements/:id` | the person (or CFO) | My pay; payslip and stipend statement PDFs |
 | POST | `/cron/daily` | scheduler (header `x-cron-secret`) | Create due bills; one digest a day to the CFO |
 | GET / POST | `/roles` | SUPER_ADMIN | List · grant |
 | POST | `/roles/:id/revoke` | SUPER_ADMIN | Revoke (kept on record) |
@@ -94,13 +100,20 @@ The script:
 - seeds 29 categories
 - installs two guards: finance audit entries are immutable, and expenses are never deleted (a paid expense is final)
 
-Then slice 2, which needs the foundation first:
+Then slice 2, then slice 3, each needing the one before:
 
 ```bash
 psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f backend/scripts/2026_finance_slice2.sql
+psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f backend/scripts/2026_finance_slice3.sql
 ```
 
-Rollbacks (`*_rollback.sql`) refuse while their records exist. Roll back in reverse order: slice 2, then the foundation.
+**Production status:** all three were applied to production on 2026-11-16, after a full backup (`pg_dump`, all 104 tables). Verified afterwards:
+- 18 new tables, RLS on, not readable by the API roles
+- 29 categories and both guards in place
+- every existing row count unchanged, and the other app's 35 tables intact
+- no drift from `schema.prisma`
+
+Rollbacks (`*_rollback.sql`) refuse while their records exist. Roll back in reverse order: slice 3, slice 2, then the foundation.
 
 Verified on a local copy built from `main`'s schema, with production's default privileges:
 - applies twice cleanly
@@ -113,16 +126,20 @@ Verified on a local copy built from `main`'s schema, with production's default p
 
 1. Create the **private** Supabase bucket `finance-documents` (or set `STORAGE_BUCKET_FINANCE`). It must not be public.
 2. Make sure `CREDENTIAL_ENCRYPTION_KEY` is set on the backend (64 hex chars). Without it, bank details are refused (503), never stored in plain text.
-3. Back up, then apply `2026_finance_foundation.sql`, then `2026_finance_slice2.sql` (above).
+3. Back up, then apply the foundation, slice 2 and slice 3 scripts, in that order (above). Done in production on 2026-11-16.
 4. Deploy the backend (Render: Manual Deploy), then the frontend (Vercel) and the admin portal.
 5. Set `FINANCE_CRON_SECRET` on the backend (24+ random characters). Create a Render cron job that runs daily, e.g. at 07:30 IST:
    `curl -fsS -X POST -H "x-cron-secret: $FINANCE_CRON_SECRET" https://<backend>/api/finance/cron/daily`
    It creates due regular bills and sends the CFO one digest a day. Running it twice does nothing extra.
 6. The CFO verifies their email and signs in once.
-7. A super admin (not the CFO) opens Admin → Finance Access and gives them the CFO role.
+7. Give the CFO role. Normally a super admin (not the CFO) does this in Admin → Finance Access. Until there is a real super admin, use the script (it refuses unverified accounts):
+   `cd backend && npx ts-node scripts/grant-finance-role.ts --email <their email> --role ECOSYSTEM_CFO --operator "<your name>"` (dry run), then the same with `--apply`.
+   There can be more than one CFO.
 8. The CFO confirms pay in **Salaries & stipends**, adds regular bills and subscriptions, and sets this month's budgets.
 
 ## Tests
+
+`backend/test/finance-payroll.test.ts` covers pay arithmetic (joiners, leavers, mid-month raises, prorated stipends), who is included in a run and why others are left out, one run per month even under concurrent requests, adjustments and holds, the bank file (account numbers never logged), idempotent payments that record one expense each, failures, the workspace lock on months in a run, payslips and "my pay".
 
 `backend/test/finance-slice2.test.ts` covers budgets (hand-worked spent, committed and available, a startup's share of shared costs), recurring due dates and duplicate-safe creation, the daily job's secret and digest, subscriptions, seats and alerts, and events.
 

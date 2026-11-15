@@ -1,4 +1,4 @@
-import { api, apiClient } from "./client";
+import { api, apiClient, downloadFile } from "./client";
 
 /**
  * The CFO finance portal (/api/finance). Every permission is decided by the
@@ -79,6 +79,7 @@ export interface Overview {
   };
   budget: null | (MoneyFigures & { count: number; overCount: number });
   payroll: null | {
+    payDuePaise: number;
     monthlySalariesPaise: number; employees: number; employeesWithoutConfirmedPay: number;
     monthlyStipendsPaise: number; internsNow: number; internsWithoutConfirmedStipend: number;
   };
@@ -154,6 +155,33 @@ export const EVENT_KIND_LABEL: Record<EventKind, string> = {
 };
 export const FREQ_LABEL: Record<Frequency, string> = { WEEKLY: "Every week", MONTHLY: "Every month", QUARTERLY: "Every 3 months", YEARLY: "Every year" };
 
+/* Slice 3: payroll and stipend runs */
+
+export type PayrollKind = "SALARY" | "STIPEND";
+export type PayrollRunStatus = "DRAFT" | "REVIEW" | "APPROVED" | "PROCESSING" | "PAID" | "PARTIALLY_PAID" | "CANCELLED";
+export type AdjustmentKind = "INCENTIVE" | "BONUS" | "DEDUCTION" | "REIMBURSEMENT" | "SETTLEMENT";
+export interface PayrollTotals { people: number; netPaise: number; paidPaise: number; unpaidPaise: number; failed: number; onHold: number; missingBank: number }
+export interface PayrollRunSummary extends PayrollTotals { id: string; kind: PayrollKind; startup: { id: string; name: string; code: string | null }; periodStart: string; status: PayrollRunStatus; basis: string; approvedAt: string | null }
+export interface PayrollLine {
+  id: string; type: PayrollKind; personId: string; name: string; code: string; detail: string | null; workedDays: number; periodDays: number;
+  basePaise: number; adjustments: Array<{ kind: AdjustmentKind; label: string; amountPaise: number }>; netPaise: number;
+  status: "PENDING" | "ON_HOLD" | "PAID" | "FAILED"; paidOn: string | null; paymentRef: string | null; failureReason: string | null; bankLast4: string | null;
+  isFinalSettlement: boolean; note: string | null;
+}
+export interface PayrollRun {
+  id: string; kind: PayrollKind; startup: { id: string; name: string; code: string | null }; periodStart: string; periodEnd: string; status: PayrollRunStatus; basis: string;
+  approvedAt: string | null; exportedAt: string | null; cancelReason: string | null; notes: string | null; lines: PayrollLine[]; totals: PayrollTotals;
+  history: Array<{ at: string; action: string; by: string | null; details: any }>;
+}
+export interface MyPay {
+  currentPay: Array<{ startup: string; monthlyGrossPaise: number; since: string }>;
+  salary: Array<{ id: string; startup: string; period: string; netPaise: number; status: string; paidOn: string | null }>;
+  stipends: Array<{ id: string; startup: string; period: string; netPaise: number; status: string; paidOn: string | null }>;
+}
+export const RUN_STATUS_LABEL: Record<PayrollRunStatus, string> = {
+  DRAFT: "Draft", REVIEW: "In review", APPROVED: "Approved — ready to pay", PROCESSING: "Paying (bank file prepared)", PAID: "Paid", PARTIALLY_PAID: "Partly paid", CANCELLED: "Cancelled",
+};
+
 const q = (params: Record<string, string | number | undefined | null>) => {
   const s = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join("&");
   return s ? `?${s}` : "";
@@ -218,6 +246,24 @@ export const financeApi = {
   createEvent: (body: Record<string, unknown>) => api.post<FinanceEvent>("/api/finance/events", body),
   updateEvent: (id: string, body: Record<string, unknown>) => api.patch<FinanceEvent>(`/api/finance/events/${id}`, body),
   addEventCost: (id: string, body: Record<string, unknown>) => api.post<Expense>(`/api/finance/events/${id}/costs`, body),
+
+
+  // Payroll (CFO)
+  payrollRuns: (startup?: string) => api.get<PayrollRunSummary[]>(`/api/finance/payroll/runs${q({ startup })}`),
+  payrollRun: (id: string) => api.get<PayrollRun>(`/api/finance/payroll/runs/${id}`),
+  createPayrollRun: (body: { kind: PayrollKind; startupId: string; year: number; month: number; basis?: "FIXED" | "ATTENDANCE" }) => api.post<{ id: string; skipped: Array<{ name: string; reason: string }> }>("/api/finance/payroll/runs", body),
+  changePayrollLine: (runId: string, lineId: string, body: { adjustments?: Array<{ kind: AdjustmentKind; label: string; amount: string }>; hold?: boolean; note?: string }) => api.patch<PayrollRun>(`/api/finance/payroll/runs/${runId}/lines/${lineId}`, body),
+  payrollAction: (runId: string, action: "submit" | "reopen") => api.post<PayrollRun>(`/api/finance/payroll/runs/${runId}/${action}`, {}),
+  approvePayroll: (runId: string) => api.post<PayrollRun>(`/api/finance/payroll/runs/${runId}/approve`, { confirm: true }),
+  cancelPayroll: (runId: string, reason: string) => api.post<PayrollRun>(`/api/finance/payroll/runs/${runId}/cancel`, { reason }),
+  bankFile: (runId: string) => api.post<{ filename: string; csv: string; included: number; totalPaise: number; missing: string[] }>(`/api/finance/payroll/runs/${runId}/bank-file`, {}),
+  payrollReport: (runId: string) => api.get<{ filename: string; csv: string }>(`/api/finance/payroll/runs/${runId}/report`),
+  payLine: (runId: string, lineId: string, body: { paidOn: string; paymentRef?: string; paymentMethod?: PaymentMethod }) => api.post<PayrollRun>(`/api/finance/payroll/runs/${runId}/lines/${lineId}/pay`, body),
+  failLine: (runId: string, lineId: string, reason: string) => api.post<PayrollRun>(`/api/finance/payroll/runs/${runId}/lines/${lineId}/fail`, { reason }),
+  // My pay (staff)
+  myPay: () => api.get<MyPay>("/api/finance/me/pay"),
+  downloadPayslip: (itemId: string) => downloadFile(`/api/finance/payslips/${itemId}`, "payslip.pdf"),
+  downloadStipendStatement: (payoutId: string) => downloadFile(`/api/finance/stipend-statements/${payoutId}`, "stipend-statement.pdf"),
 
   // Staff claims
   myClaims: () => api.get<Array<Expense & { category: { name: string }; startup: { name: string; code: string | null } }>>("/api/finance/me/claims"),
