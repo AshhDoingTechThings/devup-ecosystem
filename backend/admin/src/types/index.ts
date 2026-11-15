@@ -1,7 +1,7 @@
 export interface User {
   id: string
   email: string
-  role: 'ADMIN' | 'FOUNDER' | 'STUDENT' | 'INVESTOR'
+  role: 'ADMIN' | 'SUPER_ADMIN' | 'FOUNDER' | 'STUDENT' | 'INVESTOR'
   isVerified: boolean
   avatarUrl: string | null
   createdAt: string

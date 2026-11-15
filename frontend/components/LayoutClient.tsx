@@ -50,7 +50,18 @@ export default function LayoutClient({
    * sidebar and navigation. The marketing chrome — navbar, footer, mobile tab
    * bar, intro animation — is hidden there so the whole viewport belongs to it.
    */
-  const isWorkspace = pathname?.startsWith("/s/") ?? false;
+  // The finance portal (/finance) is the same kind of self-contained app.
+  const isWorkspace = (pathname?.startsWith("/s/") || pathname === "/finance" || pathname?.startsWith("/finance/")) ?? false;
+
+  // The root layout paints a full-screen #intro-overlay that only IntroAnimation
+  // removes — and IntroAnimation isn't rendered in these apps. Without this, a
+  // first visit straight to /s/<code> or /finance (a link in an email, a new tab)
+  // stays a blank black screen.
+  useEffect(() => {
+    if (!isWorkspace) return;
+    const overlay = document.getElementById("intro-overlay");
+    if (overlay) overlay.style.display = "none";
+  }, [isWorkspace]);
 
   if (isWorkspace) {
     return (

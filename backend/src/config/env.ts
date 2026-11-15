@@ -90,6 +90,9 @@ const envSchema = z.object({
   CREDENTIAL_ENCRYPTION_KEY: z.string().optional(),
   STORAGE_BUCKET_RESUMES: z.string().default("candidate-resumes"),
   STORAGE_BUCKET_PITCHDECKS: z.string().default("pitch-decks"),
+  // Finance receipts, proofs and payslips. MUST be a private bucket: files are only ever
+  // served by short-lived signed link (modules/finance).
+  STORAGE_BUCKET_FINANCE: z.string().default("finance-documents"),
   MAX_FILE_SIZE_MB: z.string().default("10").transform((v) => Number.parseInt(v, 10)),
 
   ADMIN_REGISTRATION_SECRET: z.string().default("dev-admin-secret-key"),

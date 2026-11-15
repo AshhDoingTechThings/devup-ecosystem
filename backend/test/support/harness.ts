@@ -43,10 +43,18 @@ export async function startHarness(dbUrl: string, opts: HarnessOptions = {}) {
   // module's own exports object and `SRC` would resolve to undefined.
   const stub = (rel: string, value: unknown) => {
     const file = require.resolve(path.join(SRC, rel));
+    // If the real module is already loaded, anything that imported it holds the REAL
+    // client (Supabase, Resend) and would reach production services with the keys in
+    // backend/.env. That happens when a test file imports a server module at the top,
+    // before startHarness(). Refuse rather than run half-stubbed.
+    if (require.cache[file] && !(require.cache[file] as any).__harnessStub) {
+      throw new Error(`Harness: src/${rel} was loaded before startHarness() — the real module would be used. Import server modules inside tests (after startHarness), not at the top of the test file.`);
+    }
     const m = new Module(file);
     m.filename = file;
     m.loaded = true;
     m.exports = value;
+    (m as any).__harnessStub = true;
     require.cache[file] = m;
   };
   stub("config/supabase", {

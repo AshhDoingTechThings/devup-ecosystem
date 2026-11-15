@@ -1,0 +1,17 @@
+/*
+ * globals.css styles p and h1–h3 as plain element rules outside Tailwind's
+ * cascade layers, and an unlayered rule beats every utility class whatever its
+ * specificity — so `text-[13px]` on a <p> rendered at 16px in the body colour.
+ *
+ * Inside the finance portal, `revert-layer` hands those properties back to the
+ * layered styles: the Tailwind classes on each element decide, as written.
+ * The rest of the site keeps its typography.
+ */
+.devup-finance :is(p, h1, h2, h3) {
+  font-family: revert-layer;
+  font-weight: revert-layer;
+  font-size: revert-layer;
+  line-height: revert-layer;
+  letter-spacing: revert-layer;
+  color: revert-layer;
+}

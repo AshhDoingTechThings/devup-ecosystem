@@ -24,6 +24,7 @@ import ServiceRequests from '@/pages/ServiceRequests'
 import Catalogue from '@/pages/Catalogue'
 import Engagements from '@/pages/Engagements'
 import SettingsPage from '@/pages/Settings'
+import FinanceAccess from '@/pages/FinanceAccess'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -77,6 +78,7 @@ export default function App() {
             <Route path="lead-appointments" element={<LeadAppointments />} />
             <Route path="cofounders" element={<Cofounders />} />
             <Route path="services" element={<ServiceRequests />} />
+            <Route path="finance-access" element={<FinanceAccess />} />
             <Route path="catalogue" element={<Catalogue />} />
             <Route path="engagements" element={<Engagements />} />
             <Route path="settings" element={<SettingsPage />} />

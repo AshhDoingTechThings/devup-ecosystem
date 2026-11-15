@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback } from 'react'
 import api, { TOKEN_KEY, REFRESH_TOKEN_KEY, USER_KEY, clearSession } from '@/config/api'
 import type { User } from '@/types'
 
+/** SUPER_ADMIN outranks ADMIN, as on the server (middleware/auth.ts isPlatformAdmin). */
+const isPlatformAdmin = (role?: string) => role === 'ADMIN' || role === 'SUPER_ADMIN'
+
 interface AuthState {
   user: User | null
   token: string | null
@@ -21,7 +24,7 @@ export function useAuth() {
     if (token && userStr) {
       try {
         const user = JSON.parse(userStr)
-        if (user.role === 'ADMIN') {
+        if (isPlatformAdmin(user.role)) {
           setState({ user, token, isLoading: false })
         } else {
           clearSession()
@@ -39,7 +42,7 @@ export function useAuth() {
     const res = await api.post('/api/auth/login', { email, password })
     const { user, token, refreshToken } = res.data.data
 
-    if (user.role !== 'ADMIN') {
+    if (!isPlatformAdmin(user.role)) {
       throw new Error('Access denied. Admin privileges required.')
     }
 
@@ -59,7 +62,7 @@ export function useAuth() {
     user: state.user,
     token: state.token,
     isLoading: state.isLoading,
-    isAuthenticated: !!state.token && state.user?.role === 'ADMIN',
+    isAuthenticated: !!state.token && isPlatformAdmin(state.user?.role),
     login,
     logout,
   }

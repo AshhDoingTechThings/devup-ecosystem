@@ -19,6 +19,7 @@ import {
   Package,
   Briefcase as BriefcaseBusiness,
   UserCheck,
+  Landmark,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 
@@ -42,6 +43,8 @@ const navItems = [
   { to: '/catalogue', icon: Package, label: 'Service Catalogue' },
   { to: '/engagements', icon: BriefcaseBusiness, label: 'Engagements' },
   { to: '/services', icon: Building2, label: 'Service Requests' },
+  // Super admins only: who may open the finance portal.
+  { to: '/finance-access', icon: Landmark, label: 'Finance Access', superAdminOnly: true },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 
@@ -60,7 +63,7 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-        {navItems.map((item) => (
+        {navItems.filter((item) => !('superAdminOnly' in item) || user?.role === 'SUPER_ADMIN').map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
@@ -87,7 +90,7 @@ export function Sidebar() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-xs font-medium text-white truncate">{user?.email || 'admin'}</p>
-            <p className="text-[10px] text-gray-500">Administrator</p>
+            <p className="text-[10px] text-gray-500">{user?.role === 'SUPER_ADMIN' ? 'Super admin' : 'Administrator'}</p>
           </div>
           <button
             onClick={logout}

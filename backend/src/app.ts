@@ -44,6 +44,7 @@ import publicVerifyRoutes from "./modules/lead-applications/verify.routes";
 import { publicKycRouter, adminKycRouter } from "./modules/lead-applications/kyc.routes";
 import { publicCatalogueRouter, adminB2bRouter } from "./modules/b2b/b2b.routes";
 import { meAffiliationRouter, adminAffiliationRouter } from "./modules/affiliations/affiliation.routes";
+import financeRoutes from "./modules/finance/finance.routes";
 
 export const app = express();
 
@@ -253,6 +254,9 @@ app.use("/api/profile", profileRoutes);
 app.use("/api/admin/partners", partnerAdminRoutes);
 app.use("/api", partnerPortalRoutes);
 app.use("/api/lead-applications", leadApplicationsRoutes);
+// CFO finance portal. Finance roles are separate from platform roles: an admin gets
+// no finance access unless a super admin grants it (modules/finance/access.ts).
+app.use("/api/finance", financeRoutes);
 
 // Global Error Handler
 app.use(errorHandler);

@@ -1,5 +1,6 @@
 import { User, StartupMemberRole } from "@prisma/client";
 import { TenantDb } from "../lib/tenantPrisma";
+import type { FinanceAccess } from "../modules/finance/access";
 
 declare global {
   namespace Express {
@@ -11,6 +12,8 @@ declare global {
       tenantRole?: StartupMemberRole | "SUPER_ADMIN";
       /** Prisma client hard-scoped to req.startupId. */
       db?: TenantDb;
+      /** Finance roles of req.user — set by modules/finance/access.ts loadFinance. */
+      finance?: FinanceAccess;
     }
   }
 }

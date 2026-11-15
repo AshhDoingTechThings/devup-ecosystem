@@ -68,6 +68,7 @@ model User {
   emailVerifications   EmailVerification[]
   joinRequests         StartupJoinRequest[]    @relation("JoinRequestUser")
   reviewedJoinRequests StartupJoinRequest[]    @relation("JoinRequestReviewer")
+  financeRoles         FinanceRole[]           @relation("FinanceRoleUser")
 }
 
 /// Single-use, expiring proof-of-inbox tokens. Only the SHA-256 of the token is
@@ -219,20 +220,23 @@ model Startup {
 
   // Short immutable tenant code used in every generated number (e.g. "ZAP").
   // Nullable only for backfill of pre-existing rows; treated as required in app logic.
-  code             String?                 @unique
-  branding         StartupBranding?
-  employees        Employee[]
-  interns          Intern[]
-  sequences        NumberSequence[]
-  hrDocuments      HrDocument[]
-  offerLetters     OfferLetter[]
-  stageEvents      ApplicationStageEvent[]
-  interviews       Interview[]
-  onboardingDocs   OnboardingDocument[]
-  onboardingReqs   OnboardingRequirement[]
-  attendancePolicy AttendancePolicy?
-  stipendPayouts   StipendPayout[]
-  partner          Partner?
+  code               String?                 @unique
+  branding           StartupBranding?
+  employees          Employee[]
+  interns            Intern[]
+  sequences          NumberSequence[]
+  hrDocuments        HrDocument[]
+  offerLetters       OfferLetter[]
+  stageEvents        ApplicationStageEvent[]
+  interviews         Interview[]
+  onboardingDocs     OnboardingDocument[]
+  onboardingReqs     OnboardingRequirement[]
+  attendancePolicy   AttendancePolicy?
+  stipendPayouts     StipendPayout[]
+  partner            Partner?
+  financeRoles       FinanceRole[]
+  expenses           Expense[]               @relation("ExpenseStartup")
+  expenseAllocations ExpenseAllocation[]     @relation("AllocationStartup")
 }
 
 enum StartupMemberRole {
@@ -1625,6 +1629,8 @@ model Employee {
   reviews        PerformanceReview[]
   onboardingDocs OnboardingDocument[]
   joinRequests   StartupJoinRequest[]
+  compensation   EmployeeCompensation[]
+  bankAccounts   PayeeBankAccount[]
 
   @@unique([startupId, email])
   @@index([startupId, status])
@@ -1670,6 +1676,7 @@ model Intern {
   workLogs       WorkLog[]
   daySummaries   DaySummary[]
   joinRequests   StartupJoinRequest[]
+  bankAccounts   PayeeBankAccount[]
 
   @@unique([startupId, email])
   @@index([startupId, status])
@@ -2393,4 +2400,282 @@ model StartupJoinRequest {
 
   @@unique([userId, startupId])
   @@index([startupId, status])
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// FINANCE — the CFO portal (docs: backend/src/modules/finance/README.md)
+//
+// Scope: every finance record has `startupId`. NULL means central DevUp
+// operations (office, shared tools, central staff); a value means that startup.
+// Money is whole paise in Int (max ₹2.1 crore per row — validated lower).
+// History is never lost: paid items are corrected with adjustment entries, not
+// edited or deleted, and every change is written to AuditLog.
+// ════════════════════════════════════════════════════════════════════════════
+
+enum FinanceRoleKind {
+  /// Everything, across central DevUp and every startup. The only role that may approve or pay.
+  ECOSYSTEM_CFO
+  /// Prepare and manage one startup's records. Cannot approve or pay.
+  STARTUP_FINANCE_MANAGER
+  /// Read-only, for one startup or (startupId null) everything except pay and bank details.
+  FINANCE_VIEWER
+}
+
+/// Who may use the finance portal. Granted by a SUPER_ADMIN to a verified account — never inferred from User.role.
+model FinanceRole {
+  id        String          @id @default(uuid())
+  userId    String
+  user      User            @relation("FinanceRoleUser", fields: [userId], references: [id], onDelete: Cascade)
+  role      FinanceRoleKind
+  /// The startup this role covers. Null: every startup and central DevUp (required null for the CFO).
+  startupId String?
+  startup   Startup?        @relation(fields: [startupId], references: [id], onDelete: Cascade)
+  grantedBy String
+  grantedAt DateTime        @default(now())
+  note      String?
+  revokedAt DateTime?
+  revokedBy String?
+
+  @@index([userId, revokedAt])
+}
+
+enum FinanceCategoryKind {
+  EXPENSE
+  INCOME
+}
+
+/// What money was spent on (or came from), with a plain-language name.
+model FinanceCategory {
+  id          String              @id @default(uuid())
+  key         String              @unique
+  name        String
+  group       String
+  kind        FinanceCategoryKind @default(EXPENSE)
+  description String?
+  isActive    Boolean             @default(true)
+  sortOrder   Int                 @default(0)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  expenses Expense[]
+}
+
+/// Someone DevUp or a startup pays. Never holds bank passwords or card details.
+model Vendor {
+  id           String   @id @default(uuid())
+  name         String
+  kind         String?
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+  gstin        String?
+  notes        String?
+  isActive     Boolean  @default(true)
+  createdBy    String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  expenses Expense[]
+
+  @@index([name])
+}
+
+enum ExpenseKind {
+  /// A bill paid (or to be paid) to a vendor.
+  VENDOR_BILL
+  /// Someone spent their own money and asks to be paid back.
+  REIMBURSEMENT
+  /// Corrects an earlier expense that can no longer be edited (amount may be negative).
+  ADJUSTMENT
+}
+
+enum ExpenseStatus {
+  DRAFT
+  SUBMITTED
+  NEEDS_INFO
+  APPROVED
+  REJECTED
+  PAID
+  VOID
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+  UPI
+  CARD
+  CASH
+  CHEQUE
+  OTHER
+}
+
+/// All money going out, whatever it was for. Office bills, subscription charges,
+/// event costs and reimbursement claims are all expenses, told apart by `kind` and `source`.
+model Expense {
+  id              String          @id @default(uuid())
+  number          String          @unique
+  /// Null: central DevUp. Otherwise the startup that owns this cost.
+  startupId       String?
+  startup         Startup?        @relation("ExpenseStartup", fields: [startupId], references: [id], onDelete: Restrict)
+  kind            ExpenseKind     @default(VENDOR_BILL)
+  title           String
+  description     String?
+  businessPurpose String?
+  categoryId      String
+  category        FinanceCategory @relation(fields: [categoryId], references: [id])
+  vendorId        String?
+  vendor          Vendor?         @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  /// Who was paid, when there is no vendor record (a person, a shop).
+  payee           String?
+  /// INR value in paise. Negative only on an ADJUSTMENT.
+  amountPaise     Int
+  /// The currency on the receipt. amountPaise is always the INR value.
+  currency        String          @default("INR")
+  originalAmount  Int?
+  incurredOn      DateTime        @db.Date
+  dueOn           DateTime?       @db.Date
+  paymentMethod   PaymentMethod?
+  status          ExpenseStatus   @default(SUBMITTED)
+  /// For a reimbursement: who is owed the money.
+  claimantUserId  String?
+  submittedBy     String
+  submittedAt     DateTime?
+  approvedBy      String?
+  approvedAt      DateTime?
+  reviewNote      String?
+  paidBy          String?
+  paidAt          DateTime?
+  paymentRef      String?
+  /// MANUAL now; RECURRING_BILL, SUBSCRIPTION, EVENT… as later modules arrive.
+  source          String          @default("MANUAL")
+  sourceId        String?
+  /// The expense this ADJUSTMENT corrects.
+  correctsId      String?
+  corrects        Expense?        @relation("ExpenseCorrection", fields: [correctsId], references: [id], onDelete: Restrict)
+  corrections     Expense[]       @relation("ExpenseCorrection")
+  notes           String?
+  deletedAt       DateTime?
+  deletedBy       String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  allocations ExpenseAllocation[]
+
+  @@index([startupId, incurredOn])
+  @@index([status, dueOn])
+  @@index([categoryId])
+  @@index([claimantUserId])
+}
+
+enum AllocationMethod {
+  FIXED
+  PERCENT
+  HEADCOUNT
+  USAGE
+  CUSTOM
+}
+
+/// One share of a central expense charged to a startup (or kept centrally, startupId null).
+/// Shares always add up to the expense. Consolidated totals count the expense once, never its shares.
+model ExpenseAllocation {
+  id          String           @id @default(uuid())
+  expenseId   String
+  expense     Expense          @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  startupId   String?
+  startup     Startup?         @relation("AllocationStartup", fields: [startupId], references: [id], onDelete: Restrict)
+  method      AllocationMethod
+  /// What the share was worked out from: basis points for PERCENT, people for HEADCOUNT, units for USAGE.
+  basis       Int?
+  amountPaise Int
+  note        String?
+  createdBy   String
+  createdAt   DateTime         @default(now())
+
+  @@index([expenseId])
+  @@index([startupId])
+}
+
+/// A receipt, invoice or payment proof, in the private finance bucket. Served only by short-lived signed link.
+model FinanceAttachment {
+  id          String    @id @default(uuid())
+  entity      String
+  entityId    String
+  startupId   String?
+  kind        String    @default("RECEIPT")
+  fileName    String?
+  mimeType    String
+  sizeBytes   Int
+  storagePath String
+  uploadedBy  String
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+  deletedBy   String?
+
+  @@index([entity, entityId])
+}
+
+/// Per-key counters for finance document numbers (EXP-2026-27-000001). Central DevUp has no
+/// startup row, so the per-startup NumberSequence cannot hold these.
+model FinanceSequence {
+  key     String @id
+  current Int    @default(0)
+}
+
+enum PayFrequency {
+  MONTHLY
+  WEEKLY
+  BIWEEKLY
+}
+
+/// An employee's pay from a date onward. Explicit monthly components — never guessed from Employee.ctc.
+model EmployeeCompensation {
+  id                String       @id @default(uuid())
+  employeeId        String
+  employee          Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  startupId         String
+  effectiveFrom     DateTime     @db.Date
+  effectiveTo       DateTime?    @db.Date
+  /// For reference: the yearly CTC this pay was set from, if any.
+  annualCtcPaise    Int?
+  monthlyGrossPaise Int
+  /// [{ name, amountPaise }] adding up to monthlyGrossPaise.
+  components        Json
+  frequency         PayFrequency @default(MONTHLY)
+  currency          String       @default("INR")
+  /// Where the figure came from: CONFIRMED_FROM_HR (accepted suggestion) or ENTERED.
+  basis             String       @default("ENTERED")
+  note              String?
+  confirmedBy       String
+  confirmedAt       DateTime     @default(now())
+  createdAt         DateTime     @default(now())
+
+  @@index([employeeId, effectiveFrom])
+}
+
+/// Where to send someone's pay. The account number and UPI ID are encrypted (AES-256-GCM)
+/// and only the last four digits are ever listed. No passwords, PINs or card data.
+model PayeeBankAccount {
+  id            String    @id @default(uuid())
+  startupId     String
+  employeeId    String?
+  employee      Employee? @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  internId      String?
+  intern        Intern?   @relation(fields: [internId], references: [id], onDelete: Cascade)
+  accountHolder String
+  accountCipher String
+  accountIv     String
+  accountTag    String
+  accountLast4  String
+  ifsc          String
+  bankName      String?
+  upiCipher     String?
+  upiIv         String?
+  upiTag        String?
+  addedBy       String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deactivatedAt DateTime?
+  deactivatedBy String?
+
+  @@index([employeeId])
+  @@index([internId])
 }
