@@ -1,0 +1,4 @@
+{
+  "description": "Who may approve changes to sensitive AI tool configuration (see lib/aiPolicy.js). Empty: any approving reviewer other than the PR author. The gate reads this file from the base branch, so a PR cannot add its own author.",
+  "reviewers": []
+}
