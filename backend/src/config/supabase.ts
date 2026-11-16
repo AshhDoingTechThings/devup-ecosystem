@@ -26,6 +26,28 @@ export function createSessionClient() {
 }
 
 /**
+ * Changes a password as the signed-in user, with their own access token.
+ *
+ * Supabase then ends every other session of the account and keeps this one.
+ * The admin route (auth.admin.updateUserById) ends all of them, the caller's
+ * own included — which signs the person out mid-request.
+ */
+export async function changePasswordAsUser(accessToken: string, password: string): Promise<{ error: { status: number; code?: string } | null }> {
+  try {
+    const res = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
+      method: "PUT",
+      headers: { apikey: env.SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    if (res.ok) return { error: null };
+    const body = (await res.json().catch(() => ({}))) as { error_code?: string; code?: string };
+    return { error: { status: res.status, code: body.error_code ?? body.code } };
+  } catch {
+    return { error: { status: 0, code: "network" } };
+  }
+}
+
+/**
  * Proves the service-role key is accepted before the server takes traffic.
  *
  * Every request is authenticated by asking Supabase, so a rejected key means

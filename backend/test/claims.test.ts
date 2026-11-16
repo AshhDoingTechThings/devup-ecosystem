@@ -59,13 +59,18 @@ function run(dbUrl: string) {
         updateUserById: async (id: string, attrs: any) => {
           const u = authUsers.get(id);
           if (!u) return { data: { user: null }, error: err(404, "user_not_found", "not found") };
-          if (attrs.password) u.password = attrs.password;
+          if (attrs.password) {
+            u.password = attrs.password;
+            // Like Supabase: an admin password change ends every session of the account.
+            for (const [t, owner] of sessions) if (owner === id) sessions.delete(t);
+          }
           if (attrs.email_confirm) u.confirmed = true;
           return { data: { user: u }, error: null };
         },
         signOut: async (jwt: string, scope = "global") => {
           signOuts.push({ jwt, scope });
           const uid = sessions.get(jwt);
+          if (!uid) return { error: err(404, "session_not_found", "Session not found") };
           for (const [t, owner] of sessions) {
             if (owner === uid && (scope === "global" || t !== jwt)) sessions.delete(t);
           }
@@ -73,6 +78,16 @@ function run(dbUrl: string) {
         },
       },
     },
+  };
+  // PUT /auth/v1/user as the signed-in user: ends every other session, keeps this one.
+  let refuseOwnerPasswordChange = false;
+  const changePasswordAsUser = async (jwt: string, password: string) => {
+    const uid = sessions.get(jwt);
+    if (!uid) return { error: { status: 403, code: "session_not_found" } };
+    if (refuseOwnerPasswordChange) return { error: { status: 401, code: "reauthentication_needed" } };
+    authUsers.get(uid)!.password = password;
+    for (const [t, owner] of sessions) if (owner === uid && t !== jwt) sessions.delete(t);
+    return { error: null };
   };
   const createSessionClient = () => ({
     auth: {
@@ -102,7 +117,7 @@ function run(dbUrl: string) {
     m.exports = exports;
     require.cache[file] = m;
   }
-  stub("config/supabase", { supabaseAdmin, supabase: {}, createSessionClient, verifySupabaseAuthConfig: async () => true });
+  stub("config/supabase", { supabaseAdmin, supabase: {}, createSessionClient, changePasswordAsUser, verifySupabaseAuthConfig: async () => true });
   stub("lib/resend", {
     MAIL_FROM: "DevUp <test@example.test>",
     resend: { emails: { send: async (p: any) => (mails.push(p), { data: {}, error: null }) } },
@@ -538,6 +553,52 @@ function run(dbUrl: string) {
       assert.equal(sessions.has(squatterSession), false, "squatter's session revoked");
       assert.ok(sessions.has(token), "owner's Google session kept");
       assert.equal((await prisma.employee.findUnique({ where: { id: employee.id } })).userId, id);
+    });
+
+    test("an account with a password signing in with Google again and again is not signed out each time", async () => {
+      // A real account (password + Google, verified by Google) from before email verification existed.
+      const owner = email("google-loop");
+      await auth.register({ email: owner, password: "owner-pass-1" });
+      const id = (await prisma.user.findFirst({ where: { email: owner } })).id;
+      authUsers.get(id)!.confirmed = true;
+      const first = googleSession({ id, email: owner, googleVerified: true, withPassword: true });
+
+      const user = await auth.syncGoogleUser(first.token);
+      assert.ok(user.emailVerifiedAt, "verified on the first Google sign-in");
+      assert.ok(sessions.has(first.token), "and still signed in");
+
+      const second = googleSession({ id, email: owner, googleVerified: true, withPassword: true });
+      const pw = authUsers.get(id)!.password;
+      await auth.syncGoogleUser(second.token);
+      assert.equal(authUsers.get(id)!.password, pw, "no second reset");
+      assert.ok(sessions.has(second.token) && sessions.has(first.token), "no one signed out");
+    });
+
+    test("if Supabase refuses the owner's password change, the admin reset still finishes verification", async () => {
+      const owner = email("google-fallback");
+      await auth.register({ email: owner, password: "squatter-pass-2" });
+      const id = (await prisma.user.findFirst({ where: { email: owner } })).id;
+      authUsers.get(id)!.confirmed = true;
+      const squatter = (await createSessionClient().auth.signInWithPassword({ email: owner, password: "squatter-pass-2" })).data.session!.access_token;
+      const first = googleSession({ id, email: owner, googleVerified: true, withPassword: true });
+
+      refuseOwnerPasswordChange = true;
+      try {
+        const user = await auth.syncGoogleUser(first.token);
+        assert.ok(user.emailVerifiedAt, "verified even though every session ended");
+      } finally {
+        refuseOwnerPasswordChange = false;
+      }
+      assert.notEqual(authUsers.get(id)!.password, "squatter-pass-2");
+      assert.equal(sessions.has(squatter), false, "squatter signed out");
+      assert.equal(sessions.has(first.token), false, "the admin route ends the owner's session too");
+
+      // The owner signs in once more: no reset, stays signed in.
+      const second = googleSession({ id, email: owner, googleVerified: true, withPassword: true });
+      const pw = authUsers.get(id)!.password;
+      await auth.syncGoogleUser(second.token);
+      assert.equal(authUsers.get(id)!.password, pw);
+      assert.ok(sessions.has(second.token));
     });
 
     test("a profile row owned by a different auth account is neither verified nor used to claim", async () => {

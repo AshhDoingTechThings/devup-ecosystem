@@ -1,7 +1,7 @@
 import { randomBytes } from "crypto";
 import { isAuthRetryableFetchError, Session } from "@supabase/supabase-js";
 import { prisma } from "../../lib/prisma";
-import { supabaseAdmin, createSessionClient } from "../../config/supabase";
+import { supabaseAdmin, createSessionClient, changePasswordAsUser } from "../../config/supabase";
 import { AppError } from "../../middleware/errorHandler";
 import { Role, AuthProvider } from "@prisma/client";
 import { env, productionGaps } from "../../config/env";
@@ -301,16 +301,31 @@ export class AuthService {
    * knows and every other session is revoked before anything is attached. The
    * real owner keeps Google sign-in and can set a password via "Forgot password".
    *
-   * Returns false, leaving the account unverified, if either step fails.
+   * The password is changed with the owner's own token, so Supabase ends every
+   * other session and keeps this one. If that is refused, the admin route is
+   * used instead: it ends every session, this one too, so the owner signs in
+   * once more — but the account is already shut to anyone else, so it is
+   * marked verified and that next sign-in does not repeat the reset. (Before,
+   * the follow-up "sign out others" failed on the already-ended session, the
+   * address was never marked verified, and every Google sign-in reset the
+   * password and signed the owner out again.)
+   *
+   * Returns false, leaving the account unverified, only if the account could
+   * not be shut to others.
    */
   private async trustOAuthEmail(userId: string, accessToken: string, hasPassword: boolean) {
     if (hasPassword) {
-      const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-        password: randomBytes(32).toString("base64url"),
-      });
-      if (error) {
-        logger.warn(`oauth verify: could not reset password for user ${userId} (status ${error.status ?? "n/a"})`);
-        return false;
+      const password = randomBytes(32).toString("base64url");
+      const asOwner = await changePasswordAsUser(accessToken, password);
+      if (asOwner.error) {
+        logger.warn(`oauth verify: owner password change refused for user ${userId} (status ${asOwner.error.status}, ${asOwner.error.code ?? "n/a"}); using the admin route`);
+        const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, { password });
+        if (error) {
+          logger.warn(`oauth verify: could not reset password for user ${userId} (status ${error.status ?? "n/a"})`);
+          return false;
+        }
+        // Supabase has ended every session of the account, including this one.
+        return this.markOAuthVerified(userId);
       }
     }
 
@@ -319,7 +334,10 @@ export class AuthService {
       logger.warn(`oauth verify: could not revoke other sessions for user ${userId} (status ${outError.status ?? "n/a"})`);
       return false;
     }
+    return this.markOAuthVerified(userId);
+  }
 
+  private async markOAuthVerified(userId: string) {
     await prisma.user.updateMany({
       where: { id: userId, emailVerifiedAt: null },
       data: { emailVerifiedAt: new Date() },
